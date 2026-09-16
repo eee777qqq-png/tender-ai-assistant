@@ -1,133 +1,150 @@
 from __future__ import annotations
 
+import io
 import logging
+import re
+import uuid
+import zipfile
+from dataclasses import dataclass, field
 from datetime import date
-from typing import Iterable
+from xml.etree import ElementTree as ET
 
 import requests
-from requests import Session
-from zeep import Client, Settings
-from zeep.exceptions import Fault, TransportError
-from zeep.transports import Transport
 
 from .config import EISConfig
 from .exceptions import EISRequestError
-from .models import Purchase
+from .soap_request import build_docs_by_org_region_request
+from .soap_response import extract_archive_urls
 
 logger = logging.getLogger(__name__)
 
+_OKPD2_TAG_RE = re.compile(r"okpd", re.IGNORECASE)
+_OKPD2_CODE_RE = re.compile(r"^\d{2}(\.\d{1,3}){0,3}$")
+
+
+@dataclass
+class ConstructionDocument:
+    """Документ из архива ЕИС, в котором нашёлся ОКПД2-код раздела «Строительство»."""
+
+    archive_url: str
+    file_name: str
+    okpd2_codes: list[str] = field(default_factory=list)
+
 
 class EISClient:
-    """Тонкая обёртка над SOAP-сервисом ЕИС (int44.zakupki.gov.ru и аналоги).
+    """Клиент сервиса отдачи информации ЕИС (docs/eis-integration-instruction-2025.pdf).
 
-    Сервис требует двустороннего TLS (mTLS) клиентским сертификатом,
-    выданным при подключении по соглашению об информационном
-    взаимодействии. Если сертификат выпущен на ГОСТ-криптографии,
-    стандартный `ssl`/`requests` его не обработает — см. README, раздел
-    "ГОСТ и КриптоПро", про варианты обхода этого ограничения.
+    Реализует подтверждённый в официальной инструкции протокол getDocsByOrgRegionRequest:
+    отбор документов по региону заказчика + подсистеме + типу документа + точной дате.
+    У сервиса нет фильтра по ОКПД2 — после скачивания архива документы
+    сканируются на предмет ОКПД2-кодов и прогоняются через
+    `classifier.ConstructionClassifier`, чтобы оставить только стройку.
+
+    Аутентификация зависит от `config.consumer_type` (см. EISConfig):
+    - legal_entity — mTLS клиентским сертификатом;
+    - individual_person — токен в заголовке SOAP;
+    - vsrz — не поддерживается этим методом (другой запрос, см. soap_request.py).
     """
 
-    def __init__(self, config: EISConfig):
+    def __init__(self, config: EISConfig, construction_classifier=None):
         self.config = config
         self._session = self._build_session()
-        self._client = self._build_soap_client()
+        self._classifier = construction_classifier
 
-    def _build_session(self) -> Session:
+    def _build_session(self) -> requests.Session:
         session = requests.Session()
-        session.cert = (self.config.client_cert, self.config.client_key)
+        if self.config.consumer_type == "legal_entity":
+            session.cert = (self.config.client_cert, self.config.client_key)
+        session.headers["Content-Type"] = "text/xml; charset=utf-8"
         return session
 
-    def _build_soap_client(self) -> Client:
-        transport = Transport(session=self._session, timeout=self.config.timeout)
-        settings = Settings(strict=False, xml_huge_tree=True)
-        try:
-            return Client(self.config.wsdl_url, transport=transport, settings=settings)
-        except (TransportError, requests.RequestException) as exc:
-            raise EISRequestError(f"Не удалось загрузить WSDL: {exc}") from exc
-
-    def list_operations(self) -> list[str]:
-        """Служебный метод: список доступных SOAP-операций в загруженном WSDL.
-
-        Полезен на этапе интеграции, чтобы свериться с EIS_OPERATION_NAME.
-        """
-        service = self._client.service
-        return [op for op in dir(service) if not op.startswith("_")]
-
-    def get_purchases_by_okpd2(
-        self,
-        okpd2_codes: Iterable[str] | None = None,
-        region_code: str | None = None,
-        date_from: date | None = None,
-        date_to: date | None = None,
-    ) -> list[Purchase]:
-        """Забирает список закупок по ОКПД2-кодам для заданного региона.
-
-        Параметры запроса (`filterParams` ниже) — placeholder под реальную
-        структуру входного типа операции: EIS отдаёт её в WSDL/XSD, которые
-        выдаются вместе с доступом. Названия полей нужно свести к фактической
-        схеме (обычно нечто вроде `docPublishDateFrom`, `okpd2Codes`,
-        `regionCodes` — см. регламент информационного взаимодействия).
-        """
-        codes = list(okpd2_codes or self.config.okpd2_codes)
-        region = region_code or self.config.region_code
-
-        operation = getattr(self._client.service, self.config.operation_name, None)
-        if operation is None:
-            available = ", ".join(self.list_operations())
-            raise EISRequestError(
-                f"Операция '{self.config.operation_name}' не найдена в WSDL. "
-                f"Доступные операции: {available}"
-            )
-
-        filter_params = {
-            "regionCodes": [region],
-            "okpd2Codes": codes,
-        }
-        if date_from is not None:
-            filter_params["publishDateFrom"] = date_from
-        if date_to is not None:
-            filter_params["publishDateTo"] = date_to
-
-        logger.info(
-            "Запрос закупок в ЕИС: операция=%s регион=%s окпд2=%s",
-            self.config.operation_name,
-            region,
-            codes,
+    def fetch_archive_urls(self, exact_date: date) -> list[str]:
+        """Отправляет getDocsByOrgRegionRequest и возвращает ссылки на архивы с документами."""
+        request_xml = build_docs_by_org_region_request(
+            self.config, exact_date=exact_date, request_id=str(uuid.uuid4())
         )
-
         try:
-            response = operation(**filter_params)
-        except Fault as exc:
-            raise EISRequestError(f"SOAP fault от ЕИС: {exc}") from exc
+            response = self._session.post(
+                self.config.endpoint, data=request_xml.encode("utf-8"), timeout=self.config.timeout
+            )
+            response.raise_for_status()
         except requests.RequestException as exc:
             raise EISRequestError(f"Ошибка сети при обращении к ЕИС: {exc}") from exc
 
-        items = self._extract_items(response)
-        return [Purchase.from_soap_object(item) for item in items]
+        return extract_archive_urls(response.text)
+
+    def download_archive(self, archive_url: str) -> bytes:
+        try:
+            response = self._session.get(archive_url, timeout=self.config.timeout)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise EISRequestError(f"Не удалось скачать архив {archive_url}: {exc}") from exc
+        return response.content
+
+    def get_construction_documents(self, exact_date: date) -> list[ConstructionDocument]:
+        """Забирает документы за дату, отбирает те, у которых ОКПД2 относится к строительству.
+
+        Требует классификатор (`classifier.ConstructionClassifier`), переданный при
+        создании клиента или через `construction_classifier=`.
+        """
+        classifier = self._require_classifier()
+        results: list[ConstructionDocument] = []
+
+        for archive_url in self.fetch_archive_urls(exact_date):
+            archive_bytes = self.download_archive(archive_url)
+            for file_name, xml_bytes in self._extract_xml_files(archive_bytes):
+                codes = self._find_okpd2_codes(xml_bytes)
+                construction_codes = [c for c in codes if classifier.is_construction_code(c)]
+                if construction_codes:
+                    results.append(
+                        ConstructionDocument(
+                            archive_url=archive_url,
+                            file_name=file_name,
+                            okpd2_codes=construction_codes,
+                        )
+                    )
+        return results
+
+    def _require_classifier(self):
+        if self._classifier is None:
+            raise EISRequestError(
+                "Не передан ConstructionClassifier — создайте EISClient(config, "
+                "construction_classifier=ConstructionClassifier())"
+            )
+        return self._classifier
 
     @staticmethod
-    def _extract_items(response) -> list:
-        """Достаёт список закупок из ответа SOAP.
+    def _extract_xml_files(archive_bytes: bytes) -> list[tuple[str, bytes]]:
+        files = []
+        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
+            for name in zf.namelist():
+                if name.lower().endswith(".xml"):
+                    files.append((name, zf.read(name)))
+        return files
 
-        Реальная обёртка ответа зависит от WSDL (часто это что-то вроде
-        `response.dataInfo.purchaseList.purchase`). Здесь — попытка
-        подобрать разумный путь автоматически, но при интеграции с боевым
-        WSDL это стоит заменить на точный путь из схемы.
+    @staticmethod
+    def _find_okpd2_codes(xml_bytes: bytes) -> list[str]:
+        """Эвристический поиск ОКПД2-кодов в документе.
+
+        Точная XSD-схема содержимого документов (извещений/контрактов) не
+        входит в инструкцию по сервису отдачи информации — здесь ищутся
+        элементы, чьё имя похоже на «ОКПД2», и из их текста/атрибутов
+        вытаскивается код вида "41.20.10.110". Стоит уточнить/расширить,
+        когда появятся реальные образцы документов.
         """
-        if response is None:
+        try:
+            root = ET.fromstring(xml_bytes)
+        except ET.ParseError:
             return []
-        if isinstance(response, list):
-            return response
 
-        for attr in ("purchases", "purchaseList", "items", "dataInfo"):
-            value = getattr(response, attr, None)
-            if value is not None:
-                if isinstance(value, list):
-                    return value
-                nested = getattr(value, "purchase", None) or getattr(value, "items", None)
-                if nested is not None:
-                    return nested if isinstance(nested, list) else [nested]
-        return []
+        codes: list[str] = []
+        for el in root.iter():
+            tag = el.tag.split("}", 1)[-1] if "}" in el.tag else el.tag
+            if _OKPD2_TAG_RE.search(tag):
+                for value in (el.text, *el.attrib.values()):
+                    if value and _OKPD2_CODE_RE.match(value.strip()):
+                        codes.append(value.strip())
+        return codes
 
     def close(self) -> None:
         self._session.close()
