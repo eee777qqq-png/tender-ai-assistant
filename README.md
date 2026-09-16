@@ -14,6 +14,9 @@
   агентов 3, 4, 6) — трекер, который решает, можно ли перевести агента с
   полной проверки эксперта на выборочный аудит, по правилам протокола
   контроля качества.
+- **Лог расхождений** (часть ТЗ Агента 4) — структурированная запись, что
+  именно эксперт поправил в выдаче агента, плюс статистика по самым частым
+  расхождениям.
 - **Агент 2 (Классификатор)** — справочник ОКПД2 по разделу «Строительство»
   (коды 41/42/43, 548 записей из официального классификатора) и проверка,
   относится ли код закупки к строительству. По решению владельца — весь
@@ -64,12 +67,14 @@ tender-ai-assistant/
 │   │   ├── models.py         # ClientProfile, 4 блока полей, ProfileStatus
 │   │   └── validation.py     # проверка полноты/достоверности профиля
 │   └── quality_control/           # метрика перехода на выборочный аудит
-│       └── audit_readiness.py   # AuditReadinessTracker/Registry (агенты 3, 4, 6)
+│       ├── audit_readiness.py   # AuditReadinessTracker/Registry (агенты 3, 4, 6)
+│       └── discrepancy_log.py   # DiscrepancyLog — лог правок эксперта (Агент 4)
 └── tests/
     ├── test_client.py       # моки, без обращения к ЕИС
     ├── test_classifier.py
     ├── test_onboarding.py
-    └── test_audit_readiness.py
+    ├── test_audit_readiness.py
+    └── test_discrepancy_log.py
 ```
 
 ## Установка
@@ -175,6 +180,26 @@ else:
 ≥90% без существенной корректировки и 0 критических ошибок в окне; любая
 критическая ошибка после перехода — немедленный откат на полную проверку
 эксперта с историей в `tracker.rollback_history`.
+
+### Лог расхождений (Агент 4)
+
+```python
+from quality_control import DiscrepancyLog
+
+log = DiscrepancyLog()
+log.log(
+    agent_name="agent_4_smetchik",
+    check_id="smeta-2026-001",
+    field_name="unit_price",
+    agent_value="1200",
+    expert_value="1350",
+    critical=False,
+    note="расценка ГЭСН взята для другого региона",
+)
+
+log.most_common_fields("agent_4_smetchik")  # где агент чаще всего ошибается
+log.critical_count("agent_4_smetchik")
+```
 
 ## Классификатор ОКПД2 «Строительство» (Агент 2)
 

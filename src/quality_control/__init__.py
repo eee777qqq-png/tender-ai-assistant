@@ -5,6 +5,7 @@ from .audit_readiness import (
     ReviewMode,
     RollbackEvent,
 )
+from .discrepancy_log import DiscrepancyEntry, DiscrepancyLog
 
 __all__ = [
     "AuditReadinessRegistry",
@@ -12,4 +13,6 @@ __all__ = [
     "CheckOutcome",
     "ReviewMode",
     "RollbackEvent",
+    "DiscrepancyEntry",
+    "DiscrepancyLog",
 ]
