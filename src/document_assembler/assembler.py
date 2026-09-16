@@ -34,7 +34,11 @@ def assemble_document_package(profile: ClientProfile, tender: Tender) -> Documen
             status = "ready"
         else:
             status = "missing"
-        fields.append(PackageField(name=name, source=source, value=str(value), status=status))
+        fields.append(
+            PackageField(
+                name=name, source=source, value=str(value), status=status, required=required
+            )
+        )
 
     # Данные закупки — из Tender (Агент 2), не из профиля.
     add("Номер закупки", "tender.purchase_number", tender.purchase_number)

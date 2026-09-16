@@ -20,6 +20,7 @@ class PackageField:
     source: str  # путь к полю-источнику, например "legal.inn" или "tender.max_price"
     value: str
     status: str  # "ready" | "missing" | "not_applicable"
+    required: bool = True  # обязательно ли поле для этой конкретной закупки
 
 
 @dataclass
