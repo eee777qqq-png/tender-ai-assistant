@@ -30,6 +30,11 @@
   регион, СРО, опыт, финансовая готовность — на тестовых данных
   (`classifier/sample_tenders.py`), пока Агент 1 не отдаёт полные
   структурированные закупки.
+- **Агент 6 (Сборщик документов)** — пока каркас: проверяет, что профиль
+  клиента в статусе `READY` (жёсткая ошибка, если нет), и строит заготовку
+  пакета документов — какие поля нужны и из какого поля профиля/закупки
+  каждое берётся. Содержательной генерации нет — зависит от Агента 3
+  (не специфицирован).
 
 ## Доступ к ЕИС: что реально нужно (проверено по официальной инструкции)
 
@@ -104,6 +109,9 @@ tender-ai-assistant/
 │   ├── onboarding/                # Агент 11: Онбординг клиента
 │   │   ├── models.py         # ClientProfile, 4 блока полей, ProfileStatus
 │   │   └── validation.py     # проверка полноты/достоверности профиля
+│   ├── document_assembler/        # Агент 6: Сборщик документов (каркас)
+│   │   ├── models.py         # DocumentPackage, PackageField
+│   │   └── assembler.py      # проверка READY + заготовка полей пакета
 │   └── quality_control/           # метрика перехода на выборочный аудит
 │       ├── audit_readiness.py   # AuditReadinessTracker/Registry (агенты 3, 4, 6)
 │       └── discrepancy_log.py   # DiscrepancyLog — лог правок эксперта (Агент 4)
@@ -113,6 +121,7 @@ tender-ai-assistant/
     ├── test_classifier.py
     ├── test_matching.py
     ├── test_onboarding.py
+    ├── test_document_assembler.py
     ├── test_audit_readiness.py
     └── test_discrepancy_log.py
 ```
@@ -303,6 +312,31 @@ for reason in best.failed_reasons:
 закупки по образцу реальных строительных тендеров 44-ФЗ по всем 4
 регионам пилота, для демонстрации и тестов — не настоящие данные из ЕИС
 (Агент 1 их пока не отдаёт в таком структурированном виде).
+
+## Сборщик документов (Агент 6) — каркас
+
+```python
+from document_assembler import assemble_document_package
+
+# profile.status должен быть READY (см. Агент 11 выше) — иначе ValueError
+package = assemble_document_package(profile, tender)
+
+for f in package.fields:
+    print(f.name, "<-", f.source, "=", f.value, f"[{f.status}]")
+
+if not package.is_complete():
+    print("Не хватает:", [f.name for f in package.missing_fields()])
+```
+
+`assemble_document_package()` — это каркас, не генератор документов: он не
+пишет содержимое (это будущая зона ответственности Агента 3 — Аналитика
+документации, который не специфицирован), а только фиксирует, какие поля
+пакета нужны и откуда каждое берётся (`source`, например `"legal.inn"`
+или `"tender.max_price"`). Статус поля — `ready` / `missing` /
+`not_applicable` (например, номер СРО не нужен, если закупка его не
+требует). Если профиль клиента не в статусе `READY` — жёсткая ошибка
+`ValueError`, без тихого пропуска шага, в соответствии с протоколом
+контроля качества.
 
 ## Тесты
 
