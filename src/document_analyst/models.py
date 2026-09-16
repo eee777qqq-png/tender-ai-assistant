@@ -50,9 +50,14 @@ class SecurityRequirement:
 
 @dataclass
 class ParticipantRequirement:
-    """Требование к участнику закупки (допуски, опыт и т. п.)."""
+    """Требование к участнику закупки (допуски, опыт и т. п.).
+
+    `kind` — машиночитаемая метка ("sro" | "experience" | "other"), нужна
+    Агенту 6, чтобы связать конкретное извлечённое требование с полем
+    пакета документов, не разбирая `description` текстом заново."""
 
     description: str
+    kind: str = "other"
     raw_text: str = ""
 
 
@@ -69,13 +74,25 @@ class HiddenRisk:
 
 @dataclass
 class ExtractedRequirements:
-    """Результат работы Агента 3 по одному документу закупки."""
+    """Результат работы Агента 3 по одному документу закупки.
+
+    `expert_reviewed` — по протоколу контроля качества (CLAUDE.md) выдачу
+    Агента 3 нельзя использовать ниже по конвейеру (Агент 6) без
+    подтверждения эксперта-человека. Подключение к Агенту 6 не снимает и не
+    автоматизирует эту проверку — `assemble_document_package()` откажет,
+    если этот флаг не выставлен явно через `mark_expert_reviewed()`."""
 
     tender_purchase_number: str
     timeline: SubmissionTimeline = field(default_factory=SubmissionTimeline)
     security_requirements: list[SecurityRequirement] = field(default_factory=list)
     participant_requirements: list[ParticipantRequirement] = field(default_factory=list)
     hidden_risks: list[HiddenRisk] = field(default_factory=list)
+    expert_reviewed: bool = False
+    expert_reviewer: str = ""
 
     def security_requirement(self, kind: str) -> SecurityRequirement | None:
         return next((r for r in self.security_requirements if r.kind == kind), None)
+
+    def mark_expert_reviewed(self, reviewer: str) -> None:
+        self.expert_reviewed = True
+        self.expert_reviewer = reviewer

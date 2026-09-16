@@ -1,11 +1,20 @@
 """Сквозной прогон одного тестового профиля и одной тестовой закупки через
-всю связанную цепочку агентов: Классификатор (2) -> Сборщик документов (6)
--> Проверка комплектности (7).
+всю связанную цепочку агентов: Классификатор (2) -> Аналитик документации
+(3) -> Сборщик документов (6) -> Проверка комплектности (7).
 
-Агенты 1 (монитор), 3 (аналитик документации), 4 (сметчик), 5 (скоринг) в
-эту цепочку пока не встроены — либо ждут реальных данных ЕИС, либо не
-специфицированы, либо (агент 3) есть только отдельным каркасом, не
-подключённым к сборщику документов (см. CLAUDE.md).
+Агент 3 теперь реально подключён к Агенту 6 (не в обход него): пакет
+собирается с `extracted_requirements`, поэтому обязательность полей
+обеспечения и допусков учитывает то, что извлечено из текста документации,
+а не только структурированные поля `Tender`. Обязательная проверка
+эксперта результата Агента 3 (`expert_reviewed`) в этой цепочке не
+автоматизирована — `mark_expert_reviewed()` ниже лишь имитирует то
+единственное решение, которое в реальном процессе принимает человек;
+без него `assemble_document_package()` отказал бы (см.
+`tests/test_document_assembler.py::test_rejects_unreviewed_agent_3_output`).
+
+Агенты 1 (монитор), 4 (сметчик), 5 (скоринг) в эту цепочку пока не
+встроены — либо ждут реальных данных ЕИС, либо не специфицированы (см.
+CLAUDE.md).
 
 Печатает результат каждого шага при запуске с `pytest -s`, чтобы можно было
 увидеть весь путь профиль+закупка -> вердикт, а не только факт прохождения.
@@ -19,6 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from classifier import ConstructionClassifier, match_profile_to_tender
 from classifier.sample_tenders import SAMPLE_TENDERS
 from completeness_check import check_completeness
+from document_analyst import extract_requirements
+from document_analyst.sample_documents import SAMPLE_DOCUMENTS
 from document_assembler import assemble_document_package
 from onboarding import (
     Capacity,
@@ -71,7 +82,7 @@ def _build_ready_profile() -> ClientProfile:
     return profile
 
 
-def test_pipeline_from_classifier_to_completeness_check():
+def test_pipeline_from_classifier_through_document_analyst_to_completeness_check():
     profile = _build_ready_profile()
     tender = next(t for t in SAMPLE_TENDERS if t.purchase_number == "0173200001426000101")
 
@@ -93,12 +104,34 @@ def test_pipeline_from_classifier_to_completeness_check():
 
     assert match.is_match, f"Тестовые данные подобраны так, чтобы совпасть: {match.failed_reasons}"
 
+    # Агент 3 — аналитик документации: извлечение требований из текста закупки
+    extracted = extract_requirements(tender.purchase_number, SAMPLE_DOCUMENTS[tender.purchase_number])
+
+    print(f"\n=== Агент 3: Аналитик документации ===")
+    print(f"  Срок подачи: {extracted.timeline.submission_deadline}")
+    print(f"  Срок исполнения: {extracted.timeline.performance_start} — {extracted.timeline.performance_end}")
+    for sec in extracted.security_requirements:
+        print(f"  Обеспечение [{sec.kind}]: {sec.percentage}% (сумма={sec.amount})")
+    for req in extracted.participant_requirements:
+        print(f"  Требование к участнику [{req.kind}]: {req.description}")
+    for risk in extracted.hidden_risks:
+        print(f"  РИСК [{risk.category.value}]: {risk.explanation}")
+
+    # По протоколу контроля качества выдача Агента 3 не уходит дальше без
+    # подтверждения эксперта. Здесь это решение принимает не код, а вызов
+    # ниже, стоящий за место реального человека, — подключение к Агенту 6
+    # его не убирает и не подменяет (без него сборка ниже отказала бы).
+    extracted.mark_expert_reviewed(reviewer="Edwin")
+    print(f"  Проверено экспертом: {extracted.expert_reviewed} (эксперт: {extracted.expert_reviewer})")
+
     # Агент 6 — сборщик документов: заготовка пакета по профилю+закупке
-    package = assemble_document_package(profile, tender)
+    # +извлечённым Агентом 3 требованиям
+    package = assemble_document_package(profile, tender, extracted_requirements=extracted)
 
     print(f"\n=== Агент 6: Сборщик документов ===")
     for f in package.fields:
         print(f"  [{f.status:<14}] {f.name} = {f.value!r} (из {f.source}, обязательно={f.required})")
+    print(f"  Скрытые риски в пакете (для будущего Агента 8): {len(package.hidden_risks)}")
 
     # Агент 7 — проверка комплектности пакета
     result = check_completeness(package, tender)
@@ -110,12 +143,18 @@ def test_pipeline_from_classifier_to_completeness_check():
 
     assert result.is_pass()
     assert result.missing_required_fields == []
+    # Обеспечение исполнения контракта — требование, которого нет в самом
+    # Tender, оно есть только в тексте документации; появляется в пакете
+    # именно благодаря подключению Агента 3.
+    by_name = {f.name: f for f in package.fields}
+    assert "Обеспечение исполнения контракта (банковская гарантия)" in by_name
+    assert len(package.hidden_risks) == 2
 
 
 def test_pipeline_fails_completeness_when_required_field_missing():
-    """Тот же путь, но с намеренно неполным профилем — цепочка должна дойти
-    до конца и вернуть FAIL с точным списком недостающих полей, а не упасть
-    молча или пройти PASS."""
+    """Тот же путь через Агента 3, но с намеренно неполным профилем —
+    цепочка должна дойти до конца и вернуть FAIL с точным списком
+    недостающих полей, а не упасть молча или пройти PASS."""
     profile = _build_ready_profile()
     profile.legal.contact_person = ""  # намеренный пробел после READY
     tender = next(t for t in SAMPLE_TENDERS if t.purchase_number == "0173200001426000101")
@@ -124,7 +163,10 @@ def test_pipeline_fails_completeness_when_required_field_missing():
     match = match_profile_to_tender(profile, tender, classifier)
     assert match.is_match  # пробел в контактном лице не влияет на матчинг
 
-    package = assemble_document_package(profile, tender)
+    extracted = extract_requirements(tender.purchase_number, SAMPLE_DOCUMENTS[tender.purchase_number])
+    extracted.mark_expert_reviewed(reviewer="Edwin")
+
+    package = assemble_document_package(profile, tender, extracted_requirements=extracted)
     result = check_completeness(package, tender)
 
     print(f"\n=== Агент 7 (намеренно неполный профиль): {result.status.value} ===")

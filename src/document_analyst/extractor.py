@@ -169,7 +169,9 @@ def extract_requirements(tender_purchase_number: str, document_text: str) -> Ext
 
         if _SRO_RE.search(sentence):
             participant_requirements.append(
-                ParticipantRequirement(description="Требуется членство в СРО", raw_text=sentence)
+                ParticipantRequirement(
+                    description="Требуется членство в СРО", kind="sro", raw_text=sentence
+                )
             )
 
         m = _EXPERIENCE_RE.search(sentence)
@@ -180,6 +182,7 @@ def extract_requirements(tender_purchase_number: str, document_text: str) -> Ext
                     description=(
                         f"Требуется опыт выполнения аналогичных работ не менее {years} лет"
                     ),
+                    kind="experience",
                     raw_text=sentence,
                 )
             )
