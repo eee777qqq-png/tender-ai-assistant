@@ -171,24 +171,40 @@ python src/run_monitor.py --start-date 2026-09-01   # только при пер
 
 ## Профиль клиента (Агент 11)
 
+Статусная модель — 4 стадии, переход на последние две делает человек, а не
+автоматика:
+
+```
+DRAFT (черновик) → FILLED (заполнен) → EXPERT_REVIEWED (проверен экспертом) → READY (готов)
+```
+
 ```python
 from onboarding import ClientProfile, LegalInfo, validate_profile
 
-profile = ClientProfile(client_id="client-1", legal=LegalInfo(inn="7701234567", ...))
-issues = validate_profile(profile)  # заполняет profile.status
+profile = ClientProfile(client_id="client-1", region_code="77", legal=LegalInfo(inn="7701234567", ...))
+
+issues = validate_profile(profile)  # DRAFT <-> FILLED, автоматическая проверка
+if issues:
+    for issue in issues:
+        print(issue.block, issue.field, issue.message)  # профиль остаётся в DRAFT
+
+# только человек может подтвердить или отклонить:
+profile.submit_expert_review(reviewer="Edwin", approved=True, notes="проверил документы")
+# approved=False вернул бы профиль обратно в DRAFT
+
+profile.mark_ready()  # EXPERT_REVIEWED -> READY
 
 if profile.is_ready_for_agent_6():
-    ...  # можно передавать профиль дальше по конвейеру
-else:
-    for issue in issues:
-        print(issue.block, issue.field, issue.message)
+    ...  # только теперь можно передавать профиль Агенту 6
 ```
 
 `validate_profile()` проверяет заполненность всех 4 блоков (юр.данные,
 допуски/опыт, мощности, финансовая готовность) и базовую достоверность
-форматов (ИНН, ОГРН, email, телефон), выставляя `profile.status` в
-`DRAFT` / `REJECTED` / `VERIFIED`. Согласно протоколу контроля качества,
-Агент 6 обязан проверять `profile.is_ready_for_agent_6()` перед
+форматов (ИНН, ОГРН, email, телефон) — она может перевести профиль только
+между `DRAFT` и `FILLED`. `submit_expert_review()`/`mark_ready()` — ручные
+шаги, вызвать их раньше времени (например, проверить черновик) —
+`ValueError`. Согласно протоколу контроля качества, Агент 6 обязан
+проверять `profile.is_ready_for_agent_6()` (== `READY`) перед
 использованием данных клиента.
 
 ## Метрика готовности к выборочному аудиту (агенты 3, 4, 6)

@@ -18,6 +18,7 @@ from onboarding import (
 def make_valid_profile() -> ClientProfile:
     return ClientProfile(
         client_id="client-1",
+        region_code="77",
         legal=LegalInfo(
             org_name="ООО Стройсервис",
             inn="7701234567",
@@ -63,22 +64,22 @@ def test_incomplete_profile_stays_draft():
     assert not profile.is_ready_for_agent_6()
 
 
-def test_complete_and_valid_profile_becomes_verified():
+def test_complete_and_valid_profile_becomes_filled():
     profile = make_valid_profile()
     issues = validate_profile(profile)
 
     assert issues == []
-    assert profile.status == ProfileStatus.VERIFIED
-    assert profile.is_ready_for_agent_6()
+    assert profile.status == ProfileStatus.FILLED
+    assert not profile.is_ready_for_agent_6()  # ещё не проверен экспертом
 
 
-def test_complete_but_invalid_profile_is_rejected():
+def test_complete_but_invalid_profile_stays_draft():
     profile = make_valid_profile()
     profile.legal.inn = "123"  # некорректный ИНН
 
     issues = validate_profile(profile)
 
-    assert profile.status == ProfileStatus.REJECTED
+    assert profile.status == ProfileStatus.DRAFT
     assert any(issue.field == "inn" for issue in issues)
     assert not profile.is_ready_for_agent_6()
 
@@ -90,4 +91,54 @@ def test_sro_membership_without_number_is_flagged():
     issues = validate_profile(profile)
 
     assert any(issue.field == "sro_number" for issue in issues)
-    assert profile.status == ProfileStatus.REJECTED
+    assert profile.status == ProfileStatus.DRAFT
+
+
+def test_full_pipeline_draft_to_ready():
+    profile = make_valid_profile()
+    validate_profile(profile)
+    assert profile.status == ProfileStatus.FILLED
+
+    profile.submit_expert_review(reviewer="Edwin", approved=True, notes="всё ок")
+    assert profile.status == ProfileStatus.EXPERT_REVIEWED
+    assert not profile.is_ready_for_agent_6()
+
+    profile.mark_ready()
+    assert profile.status == ProfileStatus.READY
+    assert profile.is_ready_for_agent_6()
+
+    assert len(profile.expert_reviews) == 1
+    assert profile.expert_reviews[0].reviewer == "Edwin"
+    assert profile.expert_reviews[0].approved is True
+
+
+def test_expert_rejection_sends_profile_back_to_draft():
+    profile = make_valid_profile()
+    validate_profile(profile)
+
+    profile.submit_expert_review(reviewer="Edwin", approved=False, notes="сомнительный ИНН")
+
+    assert profile.status == ProfileStatus.DRAFT
+    assert not profile.is_ready_for_agent_6()
+    assert profile.expert_reviews[0].approved is False
+
+
+def test_cannot_review_a_draft_profile():
+    profile = ClientProfile(client_id="client-3")
+
+    try:
+        profile.submit_expert_review(reviewer="Edwin", approved=True)
+        assert False, "ожидался ValueError"
+    except ValueError:
+        pass
+
+
+def test_cannot_mark_ready_without_expert_review():
+    profile = make_valid_profile()
+    validate_profile(profile)
+
+    try:
+        profile.mark_ready()
+        assert False, "ожидался ValueError"
+    except ValueError:
+        pass

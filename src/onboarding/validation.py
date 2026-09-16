@@ -1,9 +1,10 @@
 """Проверка профиля клиента на полноту и достоверность (Агент 11).
 
-`validate_profile()` — единственная точка входа: прогоняет проверки формата
-и полноты по всем 4 блокам, обновляет `profile.status` и возвращает список
-найденных проблем. Пустой список + `ProfileStatus.VERIFIED` — сигнал, что
-профилем может пользоваться Агент 6 (см. `ClientProfile.is_ready_for_agent_6`).
+`validate_profile()` — автоматическая часть проверки: заполненность всех
+4 блоков и базовая корректность форматов. Она может перевести профиль
+только между DRAFT и FILLED — до EXPERT_REVIEWED и READY профиль доводит
+человек через `ClientProfile.submit_expert_review()` / `mark_ready()`
+(см. models.py), это не автоматизируется.
 """
 
 from __future__ import annotations
@@ -33,12 +34,11 @@ def validate_profile(profile: ClientProfile) -> list[ValidationIssue]:
     issues += _validate_capacity(profile)
     issues += _validate_financial(profile)
 
-    if not profile.is_complete():
-        profile.status = ProfileStatus.DRAFT
-    elif issues:
-        profile.status = ProfileStatus.REJECTED
-    else:
-        profile.status = ProfileStatus.VERIFIED
+    # FILLED только когда всё заполнено И нет проблем с форматом — это
+    # ворота перед экспертной проверкой, а не финальное одобрение.
+    profile.status = (
+        ProfileStatus.FILLED if profile.is_complete() and not issues else ProfileStatus.DRAFT
+    )
     profile.touch()
 
     return issues

@@ -1,11 +1,11 @@
 """Модели профиля клиента (Агент 11 — Онбординг).
 
 Профиль состоит из 4 блоков полей (юр.данные, допуски/опыт, мощности,
-финансовая готовность) и статусной модели. Согласно протоколу контроля
-качества (CLAUDE.md), профиль должен быть проверен на полноту и
-достоверность до того, как им воспользуется Агент 6 (Сборщик документов) —
-за это отвечает `ProfileStatus.VERIFIED` и `validate_profile()` из
-`onboarding.validation`.
+финансовая готовность) и статусной модели: черновик → заполнен → проверен
+экспертом → готов. Переход на "проверен экспертом" — не автоматический:
+его выполняет человек через `ClientProfile.submit_expert_review()`, что
+соответствует протоколу контроля качества (CLAUDE.md) — профиль проверяется
+на полноту и достоверность до того, как им воспользуется Агент 6.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ from enum import Enum
 
 
 class ProfileStatus(str, Enum):
-    DRAFT = "draft"  # создан, не все обязательные поля заполнены
-    COMPLETE = "complete"  # все 4 блока заполнены, ждёт проверки на достоверность
-    VERIFIED = "verified"  # проверен и достоверен — можно передавать Агенту 6
-    REJECTED = "rejected"  # проверка выявила проблемы, нужны исправления от клиента
+    DRAFT = "draft"  # черновик — не все обязательные поля заполнены
+    FILLED = "filled"  # заполнен — все 4 блока есть и прошли автоматическую проверку формата
+    EXPERT_REVIEWED = "expert_reviewed"  # проверен экспертом-человеком
+    READY = "ready"  # готов — можно передавать Агенту 6
 
 
 @dataclass
@@ -99,15 +99,33 @@ class FinancialReadiness:
 
 
 @dataclass
+class ExpertReview:
+    """Запись о проверке профиля экспертом-человеком."""
+
+    reviewer: str
+    approved: bool
+    notes: str = ""
+    reviewed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
 class ClientProfile:
-    """Профиль клиента целиком — 4 блока + статусная модель."""
+    """Профиль клиента целиком — 4 блока + статусная модель.
+
+    region_code — регион, в котором клиент готов участвовать в закупках
+    (используется Агентом 2 при сопоставлении профиля с закупкой, см.
+    `classifier.tender_matching`), не часть исходных 4 блоков ТЗ, но нужен
+    для сквозного сценария "профиль → подходящая закупка".
+    """
 
     client_id: str
     legal: LegalInfo = field(default_factory=LegalInfo)
     permits_experience: PermitsExperience = field(default_factory=PermitsExperience)
     capacity: Capacity = field(default_factory=Capacity)
     financial: FinancialReadiness = field(default_factory=FinancialReadiness)
+    region_code: str = ""
     status: ProfileStatus = ProfileStatus.DRAFT
+    expert_reviews: list[ExpertReview] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -122,10 +140,30 @@ class ClientProfile:
             ]
         )
 
+    def submit_expert_review(self, reviewer: str, approved: bool, notes: str = "") -> None:
+        """Фиксирует решение эксперта. Разрешено только из статуса FILLED —
+        нельзя проверять черновик, в котором ещё не все поля на месте."""
+        if self.status != ProfileStatus.FILLED:
+            raise ValueError(
+                f"Экспертная проверка возможна только из статуса FILLED, сейчас: {self.status}"
+            )
+        self.expert_reviews.append(ExpertReview(reviewer=reviewer, approved=approved, notes=notes))
+        self.status = ProfileStatus.EXPERT_REVIEWED if approved else ProfileStatus.DRAFT
+        self.touch()
+
+    def mark_ready(self) -> None:
+        """Финальный шаг — профиль официально передаётся в конвейер (Агенту 6)."""
+        if self.status != ProfileStatus.EXPERT_REVIEWED:
+            raise ValueError(
+                f"Пометить готовым можно только после EXPERT_REVIEWED, сейчас: {self.status}"
+            )
+        self.status = ProfileStatus.READY
+        self.touch()
+
     def is_ready_for_agent_6(self) -> bool:
         """Правило из протокола контроля качества: Агент 6 может использовать
         только проверенный на полноту и достоверность профиль."""
-        return self.status == ProfileStatus.VERIFIED
+        return self.status == ProfileStatus.READY
 
     def touch(self) -> None:
         self.updated_at = datetime.now(timezone.utc)
