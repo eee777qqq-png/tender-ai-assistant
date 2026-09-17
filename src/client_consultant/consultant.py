@@ -10,6 +10,12 @@
 шаблоны на 5 категорий риска / известные сейчас поля пакета, а не
 интеллектуальный пересказ произвольного текста — см. CLAUDE.md, раздел
 «Известные пробелы».
+
+`render_summary_text()` безусловно дописывает в конец сводки стандартное
+юридическое предупреждение о границах ответственности сервиса (Агент 12,
+`legal_boundaries.CLIENT_SUMMARY_LEGAL_NOTICE`) — оно вшито в саму функцию,
+а не передаётся отдельным параметром, чтобы его нельзя было забыть
+подключить.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from classifier.matching import MatchResult
 from completeness_check.models import CompletenessResult
 from document_analyst.models import HiddenRisk, RiskCategory
 from document_assembler.models import DocumentPackage
+from legal_boundaries import CLIENT_SUMMARY_LEGAL_NOTICE
 
 from .models import ClientSummary, MissingDocumentItem, PlainRisk
 
@@ -175,5 +182,11 @@ def render_summary_text(summary: ClientSummary) -> str:
 
     lines.append("")
     lines.append(summary.decision_reminder)
+
+    # Обязательное юридическое предупреждение (Агент 12) — часть самой
+    # функции рендера, а не опциональное поле ClientSummary, чтобы его
+    # нельзя было забыть подключить при выводе сводки.
+    lines.append("")
+    lines.append(CLIENT_SUMMARY_LEGAL_NOTICE)
 
     return "\n".join(lines)

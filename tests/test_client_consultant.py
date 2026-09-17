@@ -10,6 +10,7 @@ from completeness_check import check_completeness
 from document_analyst import extract_requirements
 from document_analyst.sample_documents import SAMPLE_DOCUMENTS
 from document_assembler import assemble_document_package
+from legal_boundaries import CLIENT_SUMMARY_LEGAL_NOTICE
 from onboarding import (
     Capacity,
     ClientProfile,
@@ -157,3 +158,19 @@ def test_render_summary_text_is_plain_and_includes_all_sections():
     # Без кодов статусов — это должен быть текст для собственника, не для разработчика.
     assert "PASS" not in text
     assert "FAIL" not in text
+
+
+def test_render_summary_text_always_includes_legal_boundary_notice():
+    """Агент 12: предупреждение о границах ответственности обязательно
+    в каждой сводке, независимо от результатов остальных агентов —
+    проверяем и на «подходит»-кейсе, и на «не подходит»-кейсе."""
+    profile = make_ready_profile()
+    match, completeness, package = run_pipeline(profile, "0173200001426000101")
+    fitting_summary = build_client_summary(match, completeness, package)
+    assert CLIENT_SUMMARY_LEGAL_NOTICE in render_summary_text(fitting_summary)
+
+    profile_not_fitting = make_ready_profile()
+    profile_not_fitting.region_code = "50"
+    match2, completeness2, package2 = run_pipeline(profile_not_fitting, "0173200001426000101")
+    non_fitting_summary = build_client_summary(match2, completeness2, package2)
+    assert CLIENT_SUMMARY_LEGAL_NOTICE in render_summary_text(non_fitting_summary)
