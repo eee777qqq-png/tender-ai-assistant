@@ -5,7 +5,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from classifier import ConstructionClassifier, find_matching_tenders, match_profile_to_tender
 from classifier.sample_tenders import SAMPLE_TENDERS
-from onboarding import Capacity, ClientProfile, FinancialReadiness, LegalInfo, PermitsExperience
+from onboarding import (
+    Capacity,
+    ClientProfile,
+    FinancialReadiness,
+    LegalInfo,
+    PermitsExperience,
+    TaxRegimeChoice,
+)
 
 
 def make_moscow_contractor() -> ClientProfile:
@@ -25,7 +32,9 @@ def make_moscow_contractor() -> ClientProfile:
         ),
         permits_experience=PermitsExperience(sro_membership=True, sro_number="СРО-С-1", years_of_experience=5),
         capacity=Capacity(staff_count=15, own_workforce_description="15 рабочих"),
-        financial=FinancialReadiness(tax_system="УСН", avg_annual_revenue=50_000_000),
+        financial=FinancialReadiness(
+            tax_regime=TaxRegimeChoice.USN_6_NO_VAT, avg_annual_revenue=50_000_000
+        ),
     )
 
 

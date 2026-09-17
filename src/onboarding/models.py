@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 
+from .tax_config import TaxRegimeChoice
+
 
 class ProfileStatus(str, Enum):
     DRAFT = "draft"  # черновик — не все обязательные поля заполнены
@@ -87,15 +89,26 @@ class Capacity:
 
 @dataclass
 class FinancialReadiness:
-    """Блок 4: финансовая готовность."""
+    """Блок 4: финансовая готовность.
 
-    tax_system: str = ""
+    `tax_regime` — клиент выбирает готовую комбинацию режим+ставка сам, из
+    фиксированного списка `tax_config.TaxRegimeChoice` (форма показывает
+    `tax_config.TAX_REGIME_OPTIONS`), а не пишет систему налогообложения
+    произвольным текстом. Сервис не вычисляет применимую ставку НДС из
+    `avg_annual_revenue` и не следит за порогами/индексацией УСН — см.
+    докстринг `tax_config`. `avg_annual_revenue` при этом остаётся: она
+    нужна для отдельной задачи — финансовой состоятельности клиента у
+    Агента 2 (`classifier.matching`), с выбором налогового режима не
+    связана.
+    """
+
+    tax_regime: TaxRegimeChoice | None = None
     avg_annual_revenue: float = 0.0
     working_capital: float = 0.0
     bank_guarantee_available: bool = False
 
     def is_filled(self) -> bool:
-        return bool(self.tax_system) and self.avg_annual_revenue > 0
+        return self.tax_regime is not None and self.avg_annual_revenue > 0
 
 
 @dataclass

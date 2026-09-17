@@ -11,6 +11,7 @@ from onboarding import (
     LegalInfo,
     PermitsExperience,
     ProfileStatus,
+    TaxRegimeChoice,
     validate_profile,
 )
 
@@ -47,7 +48,7 @@ def make_valid_profile() -> ClientProfile:
             own_workforce_description="15 штатных рабочих, 3 бригады",
         ),
         financial=FinancialReadiness(
-            tax_system="УСН",
+            tax_regime=TaxRegimeChoice.USN_6_NO_VAT,
             avg_annual_revenue=50_000_000,
             working_capital=3_000_000,
             bank_guarantee_available=True,

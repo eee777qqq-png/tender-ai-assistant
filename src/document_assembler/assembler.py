@@ -28,6 +28,7 @@ from __future__ import annotations
 from classifier.tender import Tender
 from document_analyst.models import ExtractedRequirements
 from onboarding.models import ClientProfile
+from onboarding.tax_config import label_for as tax_regime_label
 
 from .models import DocumentPackage, PackageField
 
@@ -141,7 +142,12 @@ def assemble_document_package(
     )
 
     # Блок 4: финансовая готовность.
-    add("Система налогообложения", "financial.tax_system", profile.financial.tax_system)
+    tax_regime = profile.financial.tax_regime
+    add(
+        "Система налогообложения",
+        "financial.tax_regime",
+        tax_regime_label(tax_regime) if tax_regime is not None else "",
+    )
     add(
         "Среднегодовая выручка",
         "financial.avg_annual_revenue",

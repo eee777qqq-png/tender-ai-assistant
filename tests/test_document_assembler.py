@@ -15,6 +15,7 @@ from onboarding import (
     FinancialReadiness,
     LegalInfo,
     PermitsExperience,
+    TaxRegimeChoice,
     validate_profile,
 )
 
@@ -46,7 +47,7 @@ def make_ready_profile() -> ClientProfile:
         ),
         capacity=Capacity(staff_count=15, own_workforce_description="15 штатных рабочих"),
         financial=FinancialReadiness(
-            tax_system="УСН",
+            tax_regime=TaxRegimeChoice.USN_6_NO_VAT,
             avg_annual_revenue=50_000_000,
             working_capital=3_000_000,
             bank_guarantee_available=True,
@@ -91,6 +92,11 @@ def test_assembles_package_skeleton_for_ready_profile():
     assert by_name["ИНН"].status == "ready"
     assert by_name["Членство в СРО (номер)"].status == "ready"
     assert by_name["Номер закупки"].source == "tender.purchase_number"
+    # Значение поля — человекочитаемая подпись выбранной комбинации
+    # режим+ставка (агент 5 берёт готовую ставку прямо из этого выбора,
+    # не вычисляет её из дохода), а не голое имя enum-константы.
+    assert by_name["Система налогообложения"].value == "УСН 6% без НДС"
+    assert by_name["Система налогообложения"].source == "financial.tax_regime"
 
 
 def test_sro_field_not_applicable_when_tender_does_not_require_it():
