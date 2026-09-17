@@ -1,6 +1,7 @@
 """Сквозной прогон одного тестового профиля и одной тестовой закупки через
 всю связанную цепочку агентов: Классификатор (2) -> Аналитик документации
-(3) -> Сборщик документов (6) -> Проверка комплектности (7).
+(3) -> Сборщик документов (6) -> Проверка комплектности (7) -> Консультант
+для клиента (8).
 
 Агент 3 теперь реально подключён к Агенту 6 (не в обход него): пакет
 собирается с `extracted_requirements`, поэтому обязательность полей
@@ -27,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from classifier import ConstructionClassifier, match_profile_to_tender
 from classifier.sample_tenders import SAMPLE_TENDERS
+from client_consultant import build_client_summary, render_summary_text
 from completeness_check import check_completeness
 from document_analyst import extract_requirements
 from document_analyst.sample_documents import SAMPLE_DOCUMENTS
@@ -150,6 +152,18 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
     assert "Обеспечение исполнения контракта (банковская гарантия)" in by_name
     assert len(package.hidden_risks) == 2
 
+    # Агент 8 — консультант для клиента: собирает итог всей цепочки в
+    # сводку для собственника, без кодов статусов и жаргона.
+    summary = build_client_summary(match, result, package)
+
+    print(f"\n=== Агент 8: Консультант для клиента ===")
+    print(render_summary_text(summary))
+
+    assert summary.tender_fits
+    assert summary.package_ready
+    assert summary.missing_documents == []
+    assert len(summary.risks) == 2
+
 
 def test_pipeline_fails_completeness_when_required_field_missing():
     """Тот же путь через Агента 3, но с намеренно неполным профилем —
@@ -174,3 +188,11 @@ def test_pipeline_fails_completeness_when_required_field_missing():
 
     assert not result.is_pass()
     assert result.missing_required_fields == ["Контактное лицо"]
+
+    summary = build_client_summary(match, result, package)
+    print(f"\n=== Агент 8 (намеренно неполный профиль) ===")
+    print(render_summary_text(summary))
+
+    assert not summary.package_ready
+    assert len(summary.missing_documents) == 1
+    assert summary.missing_documents[0].name == "Контактное лицо"
