@@ -15,6 +15,7 @@ from .config import EISConfig
 from .exceptions import EISRequestError
 from .soap_request import build_docs_by_org_region_request
 from .soap_response import extract_archive_urls
+from .tls import combined_ca_bundle_path
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,9 @@ class EISClient:
         session = requests.Session()
         if self.config.consumer_type == "legal_entity":
             session.cert = (self.config.client_cert, self.config.client_key)
+        # *.zakupki.gov.ru использует сертификат, выпущенный российским
+        # национальным УЦ (Минцифры) — его нет в стандартном certifi, см. tls.py.
+        session.verify = combined_ca_bundle_path()
         session.headers["Content-Type"] = "text/xml; charset=utf-8"
         return session
 
