@@ -9,3 +9,4 @@ certs/
 *.pfx
 .pytest_cache/
 data/monitor.sqlite3
+data/regulatory_updates.sqlite3
