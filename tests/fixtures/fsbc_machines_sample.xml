@@ -1,0 +1,42 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ResourceCatalog><Resource Code="91.05.01-017" Name="Краны башенные, грузоподъемность 8 т" MeasureUnit="маш.-ч">
+              <Prices>
+                <Price SalaryMach="451.93" LabourMach="1.00" PriceCostWithoutSalary="622.62" WithRelocation="false" DriverCode="4-100-060" MachinistCategory="6.0" />
+              </Prices>
+              <ExpendableMaterials>
+                <Material Electricity="6.83000" ElectricityCost="33.76" />
+              </ExpendableMaterials>
+            </Resource>
+            <Resource Code="91.05.05-015" Name="Краны на автомобильном ходу, грузоподъемность 16 т" MeasureUnit="маш.-ч">
+              <Prices>
+                <Price SalaryMach="451.93" LabourMach="1.00" PriceCostWithoutSalary="1167.70" WithRelocation="true" DriverCode="4-100-060" MachinistCategory="6.0" />
+              </Prices>
+              <ExpendableMaterials>
+                <Material Electricity="0" ElectricityCost="0" />
+              </ExpendableMaterials>
+            </Resource>
+            <Resource Code="91.06.05-011" Name="Погрузчики одноковшовые универсальные фронтальные пневмоколесные, номинальная вместимость основного ковша 2,6 м3, грузоподъемность 5 т" MeasureUnit="маш.-ч">
+              <Prices>
+                <Price SalaryMach="386.65" LabourMach="1.00" PriceCostWithoutSalary="1408.28" WithRelocation="true" DriverCode="4-100-050" MachinistCategory="5.0" />
+              </Prices>
+              <ExpendableMaterials>
+                <Material Electricity="0" ElectricityCost="0" />
+              </ExpendableMaterials>
+            </Resource>
+            <Resource Code="91.08.04-021" Name="Котлы битумные передвижные электрические с центробежной мешалкой, объем загрузочной емкости 400 л" MeasureUnit="маш.-ч">
+              <Prices>
+                <Price SalaryMach="0" LabourMach="0" PriceCostWithoutSalary="95.25" WithRelocation="true" MachinistCategory="" />
+              </Prices>
+              <ExpendableMaterials>
+                <Material Electricity="5.94000" ElectricityCost="29.34" />
+              </ExpendableMaterials>
+            </Resource>
+            <Resource Code="91.14.02-001" Name="Автомобили бортовые, грузоподъемность до 5 т" MeasureUnit="маш.-ч">
+              <Prices>
+                <Price SalaryMach="336.43" LabourMach="1.00" PriceCostWithoutSalary="477.92" WithRelocation="false" DriverCode="4-100-040" MachinistCategory="4.0" />
+              </Prices>
+              <ExpendableMaterials>
+                <Material Electricity="0" ElectricityCost="0" />
+              </ExpendableMaterials>
+            </Resource>
+            </ResourceCatalog>

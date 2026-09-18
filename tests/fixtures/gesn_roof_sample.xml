@@ -1,0 +1,144 @@
+<?xml version='1.0' encoding='utf-8'?>
+<base><ResourcesDirectory><ResourceCategory Type="СТРОИТЕЛЬНЫЕ РАБОТЫ" CodePrefix="ГЭСН"><Section Name="Кровли" Type="Сборник" Code="12"><Section Name="КРОВЛИ" Type="Раздел" Code="1"><Section Name="Устройство кровель скатных" Type="Таблица" Code="12-01-001">
+            <NameGroup BeginName="Устройство кровель скатных из трех слоев кровельных рулонных материалов:">
+              <Work Code="12-01-001-01" EndName="на битумной мастике" MeasureUnit="100 м2">
+                <Content>
+                  <Item Text="Наклейка рулонных материалов на битумной мастике." />
+                </Content>
+                <Resources>
+                  <Resource Code="1-100-38" EndName="Средний разряд работы 3,8" Quantity="14.6" />
+                  <Resource Code="2" Quantity="0.46" />
+                  <Resource Code="91.05.01-017" EndName="Краны башенные, грузоподъемность 8 т" Quantity="0.24" />
+                  <Resource Code="91.05.05-015" EndName="Краны на автомобильном ходу, грузоподъемность 16 т" Quantity="0.08" />
+                  <Resource Code="91.08.04-021" EndName="Котлы битумные передвижные электрические с центробежной мешалкой, объем загрузочной емкости 400 л" Quantity="5.8" />
+                  <Resource Code="91.14.02-001" EndName="Автомобили бортовые, грузоподъемность до 5 т" Quantity="0.14" />
+                  <AbstractResource Code="01.2.03.03" Name="Мастики битумосодержащие" MeasureUnit="т" Quantity="0.712" TechnologyGroups="27.03.039" />
+                  <AbstractResource Code="12.1.02.15" Name="Материалы рулонные кровельные для верхнего слоя" MeasureUnit="м2" Quantity="115" TechnologyGroups="27.01.053" />
+                  <AbstractResource Code="12.1.02.15" Name="Материалы рулонные кровельные для нижних слоев" MeasureUnit="м2" Quantity="226" TechnologyGroups="27.01.050" />
+                </Resources>
+                <NrSp>
+                  <ReasonItem Nr="Пр/812-012.0" Sp="Пр/774-012.0" />
+                </NrSp>
+              </Work>
+              <Work Code="12-01-001-02" EndName="на битумной мастике с защитным слоем из гравия на битумной мастике" MeasureUnit="100 м2">
+                <Content>
+                  <Item Text="Наклейка рулонных материалов на битумной мастике." />
+                  <Item Text="Защита рулонного кровельного ковра гравием на битумной мастике." />
+                </Content>
+                <Resources>
+                  <Resource Code="1-100-38" EndName="Средний разряд работы 3,8" Quantity="23.5" />
+                  <Resource Code="2" Quantity="1.40" />
+                  <Resource Code="91.05.01-017" EndName="Краны башенные, грузоподъемность 8 т" Quantity="1.01" />
+                  <Resource Code="91.05.05-015" EndName="Краны на автомобильном ходу, грузоподъемность 16 т" Quantity="0.1" />
+                  <Resource Code="91.06.05-011" EndName="Погрузчики одноковшовые универсальные фронтальные пневмоколесные, номинальная вместимость основного ковша 2,6 м3, грузоподъемность 5 т" Quantity="0.12" />
+                  <Resource Code="91.08.04-021" EndName="Котлы битумные передвижные электрические с центробежной мешалкой, объем загрузочной емкости 400 л" Quantity="8.26" />
+                  <Resource Code="91.14.02-001" EndName="Автомобили бортовые, грузоподъемность до 5 т" Quantity="0.17" />
+                  <Resource Code="02.2.01.02-1042" EndName="Гравий М 400-1000, фракция 5(3)-10 мм" MeasureUnit="м3" Quantity="1.05" />
+                  <AbstractResource Code="01.2.03.03" Name="Мастики битумосодержащие" MeasureUnit="т" Quantity="1.012" TechnologyGroups="27.03.039" />
+                  <AbstractResource Code="12.1.02.15" Name="Материалы рулонные кровельные для нижних слоев" MeasureUnit="м2" Quantity="341" TechnologyGroups="27.01.050" />
+                </Resources>
+                <NrSp>
+                  <ReasonItem Nr="Пр/812-012.0" Sp="Пр/774-012.0" />
+                </NrSp>
+              </Work>
+            </NameGroup>
+            <NameGroup BeginName="Устройство кровель скатных из наплавляемых материалов:">
+              <Work Code="12-01-001-03" EndName="в три слоя с защитным слоем из гравия на битумной мастике" MeasureUnit="100 м2">
+                <Content>
+                  <Item Text="Наклейка рулонных материалов методом подплавления мастичного слоя газопламенными горелками." />
+                  <Item Text="Защита рулонного кровельного ковра гравием на битумной мастике." />
+                </Content>
+                <Resources>
+                  <Resource Code="1-100-38" EndName="Средний разряд работы 3,8" Quantity="28.4" />
+                  <Resource Code="2" Quantity="1.79" />
+                  <Resource Code="91.05.01-017" EndName="Краны башенные, грузоподъемность 8 т" Quantity="1.15" />
+                  <Resource Code="91.05.05-015" EndName="Краны на автомобильном ходу, грузоподъемность 16 т" Quantity="0.18" />
+                  <Resource Code="91.06.05-011" EndName="Погрузчики одноковшовые универсальные фронтальные пневмоколесные, номинальная вместимость основного ковша 2,6 м3, грузоподъемность 5 т" Quantity="0.12" />
+                  <Resource Code="91.08.04-021" EndName="Котлы битумные передвижные электрические с центробежной мешалкой, объем загрузочной емкости 400 л" Quantity="2.11" />
+                  <Resource Code="91.14.02-001" EndName="Автомобили бортовые, грузоподъемность до 5 т" Quantity="0.34" />
+                  <Resource Code="01.3.02.09-0022" EndName="Пропан-бутан смесь техническая" MeasureUnit="кг" Quantity="44.3" />
+                  <Resource Code="02.2.01.02-1042" EndName="Гравий М 400-1000, фракция 5(3)-10 мм" MeasureUnit="м3" Quantity="1.05" />
+                  <AbstractResource Code="01.2.03.03" Name="Мастики битумосодержащие" MeasureUnit="т" Quantity="0.3" TechnologyGroups="27.03.039" />
+                  <AbstractResource Code="12.1.02.15" Name="Материалы рулонные кровельные для нижних слоев" MeasureUnit="м2" Quantity="345" TechnologyGroups="27.01.050" />
+                </Resources>
+                <NrSp>
+                  <ReasonItem Nr="Пр/812-012.0" Sp="Пр/774-012.0" />
+                </NrSp>
+              </Work>
+              <Work Code="12-01-001-04" EndName="в три слоя" MeasureUnit="100 м2">
+                <Content>
+                  <Item Text="Наклейка рулонных материалов методом подплавления мастичного слоя газопламенными горелками." />
+                </Content>
+                <Resources>
+                  <Resource Code="1-100-38" EndName="Средний разряд работы 3,8" Quantity="19.6" />
+                  <Resource Code="2" Quantity="0.41" />
+                  <Resource Code="91.05.01-017" EndName="Краны башенные, грузоподъемность 8 т" Quantity="0.23" />
+                  <Resource Code="91.05.05-015" EndName="Краны на автомобильном ходу, грузоподъемность 16 т" Quantity="0.07" />
+                  <Resource Code="91.14.02-001" EndName="Автомобили бортовые, грузоподъемность до 5 т" Quantity="0.11" />
+                  <Resource Code="01.3.02.09-0022" EndName="Пропан-бутан смесь техническая" MeasureUnit="кг" Quantity="44.3" />
+                  <AbstractResource Code="12.1.02.15" Name="Материалы рулонные кровельные для верхнего слоя" MeasureUnit="м2" Quantity="115" TechnologyGroups="27.01.054" />
+                  <AbstractResource Code="12.1.02.15" Name="Материалы рулонные кровельные для нижних слоев" MeasureUnit="м2" Quantity="226" TechnologyGroups="27.01.056" />
+                </Resources>
+                <NrSp>
+                  <ReasonItem Nr="Пр/812-012.0" Sp="Пр/774-012.0" />
+                </NrSp>
+              </Work>
+              <Work Code="12-01-001-05" EndName="в два слоя" MeasureUnit="100 м2">
+                <Content>
+                  <Item Text="Наклейка рулонных материалов методом подплавления мастичного слоя газопламенными горелками." />
+                </Content>
+                <Resources>
+                  <Resource Code="1-100-38" EndName="Средний разряд работы 3,8" Quantity="13.8" />
+                  <Resource Code="2" Quantity="0.28" />
+                  <Resource Code="91.05.01-017" EndName="Краны башенные, грузоподъемность 8 т" Quantity="0.15" />
+                  <Resource Code="91.05.05-015" EndName="Краны на автомобильном ходу, грузоподъемность 16 т" Quantity="0.05" />
+                  <Resource Code="91.14.02-001" EndName="Автомобили бортовые, грузоподъемность до 5 т" Quantity="0.08" />
+                  <Resource Code="01.3.02.09-0022" EndName="Пропан-бутан смесь техническая" MeasureUnit="кг" Quantity="29.94" />
+                  <AbstractResource Code="12.1.02.15" Name="Материалы рулонные кровельные для верхнего слоя" MeasureUnit="м2" Quantity="115" TechnologyGroups="27.01.054" />
+                  <AbstractResource Code="12.1.02.15" Name="Материалы рулонные кровельные для нижних слоев" MeasureUnit="м2" Quantity="113" TechnologyGroups="27.01.056" />
+                </Resources>
+                <NrSp>
+                  <ReasonItem Nr="Пр/812-012.0" Sp="Пр/774-012.0" />
+                </NrSp>
+              </Work>
+              <Work Code="12-01-001-06" EndName="в один слой" MeasureUnit="100 м2">
+                <Content>
+                  <Item Text="Наклейка рулонных материалов методом подплавления мастичного слоя газопламенными горелками." />
+                </Content>
+                <Resources>
+                  <Resource Code="1-100-38" EndName="Средний разряд работы 3,8" Quantity="9.12" />
+                  <Resource Code="2" Quantity="0.16" />
+                  <Resource Code="91.05.01-017" EndName="Краны башенные, грузоподъемность 8 т" Quantity="0.08" />
+                  <Resource Code="91.05.05-015" EndName="Краны на автомобильном ходу, грузоподъемность 16 т" Quantity="0.03" />
+                  <Resource Code="91.14.02-001" EndName="Автомобили бортовые, грузоподъемность до 5 т" Quantity="0.05" />
+                  <Resource Code="01.3.02.09-0022" EndName="Пропан-бутан смесь техническая" MeasureUnit="кг" Quantity="15.02" />
+                  <AbstractResource Code="12.1.02.15" Name="Материалы рулонные кровельные для верхнего слоя" MeasureUnit="м2" Quantity="115" TechnologyGroups="27.01.054" />
+                </Resources>
+                <NrSp>
+                  <ReasonItem Nr="Пр/812-012.0" Sp="Пр/774-012.0" />
+                </NrSp>
+              </Work>
+            </NameGroup>
+            <NameGroup BeginName="">
+              <Work Code="12-01-001-07" EndName="Защита ковра скатных кровель гравием на битумной мастике" MeasureUnit="100 м2">
+                <Content>
+                  <Item Text="Защита рулонного кровельного ковра гравием на битумной мастике." />
+                </Content>
+                <Resources>
+                  <Resource Code="1-100-38" EndName="Средний разряд работы 3,8" Quantity="10.32" />
+                  <Resource Code="2" Quantity="1.27" />
+                  <Resource Code="91.05.01-017" EndName="Краны башенные, грузоподъемность 8 т" Quantity="0.9" />
+                  <Resource Code="91.05.05-015" EndName="Краны на автомобильном ходу, грузоподъемность 16 т" Quantity="0.08" />
+                  <Resource Code="91.06.05-011" EndName="Погрузчики одноковшовые универсальные фронтальные пневмоколесные, номинальная вместимость основного ковша 2,6 м3, грузоподъемность 5 т" Quantity="0.13" />
+                  <Resource Code="91.08.04-021" EndName="Котлы битумные передвижные электрические с центробежной мешалкой, объем загрузочной емкости 400 л" Quantity="2.45" />
+                  <Resource Code="91.14.02-001" EndName="Автомобили бортовые, грузоподъемность до 5 т" Quantity="0.16" />
+                  <Resource Code="02.2.01.02-1042" EndName="Гравий М 400-1000, фракция 5(3)-10 мм" MeasureUnit="м3" Quantity="1.05" />
+                  <AbstractResource Code="01.2.03.03" Name="Мастики битумосодержащие" MeasureUnit="т" Quantity="0.3" TechnologyGroups="27.03.039" />
+                </Resources>
+                <NrSp>
+                  <ReasonItem Nr="Пр/812-012.0" Sp="Пр/774-012.0" />
+                </NrSp>
+              </Work>
+            </NameGroup>
+          </Section>
+          </Section></Section></ResourceCategory></ResourcesDirectory></base>

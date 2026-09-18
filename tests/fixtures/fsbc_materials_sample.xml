@@ -1,0 +1,12 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ResourceCatalog><Resource Code="01.3.02.09-0022" Name="Пропан-бутан смесь техническая" MeasureUnit="кг">
+                <Prices>
+                  <Price Cost="41.38" OptCost="39.41" />
+                </Prices>
+              </Resource>
+            <Resource Code="02.2.01.02-1042" Name="Гравий М 400-1000, фракция 5(3)-10 мм" MeasureUnit="м3">
+                <Prices>
+                  <Price Cost="1174.99" OptCost="839.50" />
+                </Prices>
+              </Resource>
+              </ResourceCatalog>
