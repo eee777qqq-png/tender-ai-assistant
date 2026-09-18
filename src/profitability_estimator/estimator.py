@@ -1,6 +1,12 @@
 """Оценка выгоды по одной паре клиент+закупка (Агент 5).
 
-`estimate_profitability()` — единственная точка входа.
+`estimate_profitability()` — единственная точка входа. `cost_estimate`
+(себестоимость) теперь реально строится Агентом 4
+(`smeta_estimator.cost_estimate.build_cost_estimate()` ->
+`SmetaCostResult.to_cost_estimate()`), а не передаётся вручную придуманным
+числом — но эта функция сама не вызывает Агента 4, а принимает уже готовый
+`CostEstimate` и проверяет на нём тот же гейт, что уже применяется к Агенту 3
+(`CostEstimate.expert_reviewed`, см. `models.py`).
 
 **Это каркас с грубыми приближениями, а не проверенная бухгалтером формула.**
 Таблица «налоговый режим клиента → сумма налога в рублях»
@@ -51,6 +57,12 @@ def estimate_profitability(
     cost_estimate: CostEstimate,
     extracted_requirements: ExtractedRequirements | None = None,
 ) -> ProfitabilityEstimate:
+    if not cost_estimate.expert_reviewed:
+        raise ValueError(
+            "Себестоимость Агента 4 должна быть проверена экспертом "
+            "(CostEstimate.expert_reviewed) до того, как ей воспользуется Агент 5"
+        )
+
     if extracted_requirements is not None:
         if extracted_requirements.tender_purchase_number != tender.purchase_number:
             raise ValueError(
@@ -65,6 +77,12 @@ def estimate_profitability(
             )
 
     risk_flags: list[str] = []
+
+    if not cost_estimate.is_complete:
+        risk_flags.append(
+            "Себестоимость от Агента 4 неполная — не все позиции сметы удалось оценить, "
+            f"итоговая маржа завышена: {cost_estimate.source_note}"
+        )
 
     security_cost = _security_cost(profile, tender, extracted_requirements, risk_flags)
     taxes = _taxes(profile, tender, cost_estimate.total_cost, security_cost, risk_flags)

@@ -1,3 +1,4 @@
+from .cost_estimate import SmetaCostResult, SmetaLineItem, build_cost_estimate
 from .fsnb_client import (
     ATTRIBUTION_NOTICE,
     DEFAULT_ARCHIVE_URL,
@@ -58,7 +59,10 @@ __all__ = [
     "RateCandidate",
     "RegionalPriceResult",
     "ResourcePriceResolution",
+    "SmetaCostResult",
+    "SmetaLineItem",
     "apply_prices",
+    "build_cost_estimate",
     "build_regulatory_version",
     "download_fsnb_archive",
     "extract_fsnb_files",

@@ -68,10 +68,15 @@ def make_profile(tax_regime=TaxRegimeChoice.USN_6_NO_VAT, bank_guarantee_availab
     return profile
 
 
-def make_cost_estimate(total_cost: float = 6_000_000) -> CostEstimate:
-    """Себестоимость передана вручную — Агент 4 (сметчик) ещё не реализован,
-    см. CostEstimate.source_note."""
-    return CostEstimate(total_cost=total_cost, as_of_date=date(2026, 7, 1))
+def make_cost_estimate(total_cost: float = 6_000_000, **overrides) -> CostEstimate:
+    """Себестоимость в этих тестах по-прежнему собрана вручную (тесты этого
+    файла — про формулу налогов/маржи, не про Агент 4 — реальная сборка из
+    Агента 4 проверяется в `tests/test_end_to_end_pipeline.py`), но теперь
+    обязана явно пройти тот же гейт `expert_reviewed`, что и настоящий
+    результат `smeta_estimator.build_cost_estimate()`."""
+    return CostEstimate(
+        total_cost=total_cost, as_of_date=date(2026, 7, 1), expert_reviewed=True, **overrides
+    )
 
 
 def reviewed_requirements():
@@ -199,3 +204,30 @@ def test_rejects_unreviewed_agent_3_output():
 
     with pytest.raises(ValueError, match="проверен экспертом"):
         estimate_profitability(profile, tender, make_cost_estimate(), extracted)
+
+
+def test_rejects_unreviewed_agent_4_cost_estimate():
+    """Тот же паттерн блокировки, что у Агента 3 -> Агент 6/5: непроверенная
+    экспертом себестоимость Агента 4 не должна тихо использоваться."""
+    profile = make_profile()
+    tender = find_tender(TENDER_PURCHASE_NUMBER)
+    extracted = reviewed_requirements()
+    unreviewed_cost_estimate = CostEstimate(total_cost=6_000_000, as_of_date=date(2026, 7, 1))
+    assert not unreviewed_cost_estimate.expert_reviewed
+
+    with pytest.raises(ValueError, match="проверена экспертом"):
+        estimate_profitability(profile, tender, unreviewed_cost_estimate, extracted)
+
+
+def test_incomplete_cost_estimate_flags_risk_but_still_computes_margin():
+    """Себестоимость, где часть позиций сметы не оценена (например, эксперт
+    не выбрал ни одного кандидата) — не блокирует расчёт, но честно
+    предупреждает, что маржа может быть завышена."""
+    profile = make_profile()
+    tender = find_tender(TENDER_PURCHASE_NUMBER)
+    extracted = reviewed_requirements()
+    cost_estimate = make_cost_estimate(is_complete=False, source_note="не оценено вовсе: 1 позиции(й)")
+
+    result = estimate_profitability(profile, tender, cost_estimate, extracted)
+
+    assert any("неполная" in f and "завышена" in f for f in result.risk_flags)
