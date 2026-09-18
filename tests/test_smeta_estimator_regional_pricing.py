@@ -153,7 +153,11 @@ def test_fetch_gosr_report_calls_the_correct_endpoint_without_real_network():
 
 def test_fetch_current_prices_json_targets_materials_or_machines_endpoint():
     with patch("requests.get") as mock_get:
-        mock_get.return_value = MagicMock(content=b'{"items":[],"total":0}', raise_for_status=lambda: None)
+        mock_get.return_value = MagicMock(
+            content=b'{"items":[],"total":0}',
+            json=lambda: {"items": [], "total": 0},
+            raise_for_status=lambda: None,
+        )
         fetch_current_prices_json(price_zone_id=191, period_id=427, category="materials")
 
     args, kwargs = mock_get.call_args

@@ -11,6 +11,13 @@
 настоящие индексы ГОСР для конкретных групп ресурсов, найденные вживую на
 fgiscs.minstroyrf.ru/prices для Москвы, 3 квартал 2026 года.
 
+**Дополнено тем же вечером** — трудозатраты рабочих (`RimWorkerSalaryRegistry`)
+и текущие цены на те машинные ресурсы, для которых в этом квартале не
+нашлось индекса ГОСР (см. `test_smeta_estimator_labor_and_pagination.py`) —
+теперь неопределённой остаётся цена только у категорий материалов без
+выбранного продукта и у одного не расшифрованного кода ГЭСН («2»,
+см. CLAUDE.md, «Известные пробелы»).
+
 Печатает результат каждого шага при запуске с `pytest -s`, по аналогии с
 `tests/test_end_to_end_pipeline.py`.
 """
@@ -25,10 +32,12 @@ from smeta_estimator import (
     AGENT_NAME,
     apply_prices,
     match_work_item,
+    parse_current_prices_json,
     parse_fsbc_machines_xml,
     parse_fsbc_materials_xml,
     parse_gesn_xml,
     parse_gosr_workbook,
+    parse_worker_salary_registry,
     price_candidates_for_region,
     review_match_result,
 )
@@ -51,18 +60,23 @@ def test_end_to_end_search_price_and_expert_review_for_a_roofing_work_item():
     gosr_index = parse_gosr_workbook((FIXTURES / "gosr_moscow_q3_2026_sample.xlsx").read_bytes())
     print(f"  Загружено индексов по кодам ресурсов: {len(gosr_index)}")
 
+    print("\n=== Загрузка текущих цен на машины и оплаты труда (реальные фрагменты) ===")
+    current_prices = {
+        **parse_current_prices_json((FIXTURES / "current_prices_moscow_machines_sample.json").read_bytes()),
+        **parse_worker_salary_registry((FIXTURES / "worker_salary_moscow_sample.json").read_bytes()),
+    }
+    print(f"  Загружено текущих цен/ставок по кодам ресурсов: {len(current_prices)}")
+
     query = "устройство кровли на битумной мастике с защитным слоем из гравия"
     print(f"\n=== Поиск кандидатов по тексту работы: {query!r} ===")
     result = match_work_item(catalog, query, TENDER_PURCHASE_NUMBER)
     assert result.candidates
 
-    # Текущих цен напрямую для этого квартала нет в тестовой выборке —
-    # честно передаём пустой словарь, а не подделываем наличие данных.
     priced_candidates = price_candidates_for_region(
         result.candidates,
         region_name="г. Москва",
         period_label="3 квартал 2026 г.",
-        current_prices={},
+        current_prices=current_prices,
         gosr_index=gosr_index,
         resource_base_prices=resource_base_prices,
     )
@@ -94,7 +108,11 @@ def test_end_to_end_search_price_and_expert_review_for_a_roofing_work_item():
     assert result.expert_reviewed
     assert result.selected_code == top.code
     assert top.priced.total_price > 0
-    # Хотя бы часть ресурсов (кран, битумный котёл, гравий) должна была
-    # получить цену через индекс ГОСР — иначе фикстура собрана неверно.
+    # Оба источника региональной цены реально задействованы — не только ГОСР.
     assert any(r.source == "gosr_index" for r in top.priced.resolutions)
+    assert any(r.source == "current_price" for r in top.priced.resolutions)
+    # После добавления оплаты труда и текущих цен на машины неопределённой
+    # остаётся цена только у категорий материалов без выбранного продукта и
+    # у нерасшифрованного кода ГЭСН "2" (см. CLAUDE.md, «Известные пробелы»).
+    assert set(top.priced.unresolved_resource_codes) <= {"2", "01.2.03.03", "12.1.02.15"}
     assert log.for_agent(AGENT_NAME) == []

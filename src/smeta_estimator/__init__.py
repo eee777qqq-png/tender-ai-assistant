@@ -32,6 +32,7 @@ from .regional_pricing_client import (
     fetch_gosr_report,
     fetch_periods,
     fetch_price_zones,
+    fetch_worker_salary_registry,
 )
 from .regional_pricing_parser import (
     GOSR_SOURCE_ID_TEMPLATE,
@@ -39,6 +40,7 @@ from .regional_pricing_parser import (
     build_regulatory_version,
     parse_current_prices_json,
     parse_gosr_workbook,
+    parse_worker_salary_registry,
 )
 from .search import search_candidates
 
@@ -65,12 +67,14 @@ __all__ = [
     "fetch_gosr_report",
     "fetch_periods",
     "fetch_price_zones",
+    "fetch_worker_salary_registry",
     "match_work_item",
     "parse_current_prices_json",
     "parse_fsbc_machines_xml",
     "parse_fsbc_materials_xml",
     "parse_gesn_xml",
     "parse_gosr_workbook",
+    "parse_worker_salary_registry",
     "price_candidate_for_region",
     "price_candidates_for_region",
     "resolve_resource_unit_price",

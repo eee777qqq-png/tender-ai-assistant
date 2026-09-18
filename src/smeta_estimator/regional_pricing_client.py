@@ -4,7 +4,7 @@
 
 **Это отдельный, третий источник** — не тот же самый API, что письма
 Минстроя (`docs/agent4-ai-matching-feasibility.md`, там разбирался общий
-`FrsnDocument`). Здесь два разных эндпоинта под одной страницей:
+`FrsnDocument`). Здесь три разных эндпоинта под одной страницей:
 
 - `/api/EstimatedPrice/BuildingResources/Search/{Materials|Machines}` —
   **текущая (актуальная) сметная цена ресурса напрямую**, если она
@@ -18,6 +18,23 @@
   (ресурсно-индексный метод), в отличие от индексов «к ФЕР-2001/ТЕР-2001»
   (для другого, более старого метода — были ошибочно использованы раньше,
   см. CLAUDE.md, «Известные пробелы»).
+- `/api/EstimatedPrice/RimWorkerSalaryRegistry` — **сметная цена затрат
+  труда, руб./чел.-ч**, по коду разряда рабочего (`1-100-XX`, тот же код,
+  что и `Resource Code` в ГЭСН) **и** по коду машиниста (`4-100-XXX`, тот
+  же код, что `DriverCode` в ФСБЦ_Маш.xml) — единый реестр закрывает и
+  трудозатраты рабочих, и часть зарплаты машиниста, см. CLAUDE.md,
+  «Известные пробелы» про то, что именно ещё не подтверждено про машинистов.
+
+**Пагинация у этих эндпоинтов устроена по-разному — проверено вживую
+2026-09-18, а не предположено.** `RimWorkerSalaryRegistry` `take`
+по-настоящему ограничивает выдачу (Москва: `total=186`, `take=100` реально
+вернул только 100 позиций) — `fetch_worker_salary_registry()` поэтому
+честно постранично догружает до `total`. У `BuildingResources/Search/*`
+на практике `take` выдачу не ограничивал (Москва: ~2700 материалов
+вернулись одним ответом при `take=25`) — но `fetch_current_prices_json()`
+всё равно не доверяет этому слепо: сверяет фактическое количество с
+`total` из ответа и, если не совпало, повторяет запрос с большим `take`,
+а не возвращает то, что пришло, как будто это полный список.
 
 Идентификаторы региона/ценовой зоны/периода нужно получать через
 `fetch_country_subjects()` → `fetch_price_zones()` → `fetch_periods()` —
@@ -25,6 +42,8 @@
 """
 
 from __future__ import annotations
+
+import json
 
 import requests
 
@@ -77,33 +96,93 @@ def fetch_periods(price_zone_id: int, timeout: int = 30) -> list[dict]:
 
 
 def fetch_current_prices_json(
-    price_zone_id: int, period_id: int, category: str, timeout: int = 60
+    price_zone_id: int,
+    period_id: int,
+    category: str,
+    timeout: int = 60,
+    initial_take: int = 25000,
+    max_take: int = 400000,
 ) -> bytes:
     """`category` — `"materials"` или `"machines"`. Пустой `search`/`value` —
-    запрашивает весь опубликованный список категории для региона/квартала
-    (проверено вживую: `take` в этом эндпоинте не ограничивает выдачу —
-    сервис и так отдаёт всё сразу, постраничная догрузка не потребовалась
-    на реальных объёмах данных Москвы, ~2700 позиций материалов)."""
+    запрашивает весь опубликованный список категории для региона/квартала.
+
+    На практике `take` у этого эндпоинта выдачу не ограничивал (см. докстринг
+    модуля), но здесь это не принимается на веру: если фактически вернувшееся
+    количество позиций меньше `total` из ответа, запрос повторяется с
+    увеличенным `take`, пока не совпадёт или пока не будет достигнут
+    `max_take` — тогда явная ошибка, а не тихо неполные данные.
+    """
     endpoint = "Materials" if category == "materials" else "Machines"
-    response = requests.get(
-        f"{BASE_URL}/EstimatedPrice/BuildingResources/Search/{endpoint}",
-        params={
-            "countrySubjectId": _subject_id_for_zone(price_zone_id),
-            "priceZoneId": price_zone_id,
-            "periodId": period_id,
-            "search": "",
-            "authorityId": "null",
-            "refresh": "{}",
-            category: "true",
-            "value": "",
-            "page": 1,
-            "take": 100000,
-            "sort": "{}",
-        },
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    return response.content
+    take = initial_take
+    while True:
+        response = requests.get(
+            f"{BASE_URL}/EstimatedPrice/BuildingResources/Search/{endpoint}",
+            params={
+                "countrySubjectId": _subject_id_for_zone(price_zone_id),
+                "priceZoneId": price_zone_id,
+                "periodId": period_id,
+                "search": "",
+                "authorityId": "null",
+                "refresh": "{}",
+                category: "true",
+                "value": "",
+                "page": 1,
+                "take": take,
+                "sort": "{}",
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        returned = sum(len(group.get("items", [])) for group in data.get("items", []))
+        total = data.get("total", returned)
+        if returned >= total:
+            return response.content
+        if take >= max_take:
+            raise ValueError(
+                f"Эндпоинт текущих цен ({category}, priceZoneId={price_zone_id}, "
+                f"periodId={period_id}) вернул только {returned} из {total} позиций даже при "
+                f"take={take} — похоже, у него всё же есть пагинация, которую этот клиент пока "
+                "не реализует постранично. Не потеряно молча, но и не собрано полностью."
+            )
+        take *= 4
+
+
+def fetch_worker_salary_registry(price_zone_id: int, period_id: int, timeout: int = 60, page_size: int = 200) -> bytes:
+    """Сметная цена затрат труда (руб./чел.-ч) по коду разряда — рабочие
+    (`1-100-XX`) и машинисты (`4-100-XXX`), один реестр на оба. Настоящая
+    постраничная догрузка — `take` здесь реально ограничивает выдачу
+    (см. докстринг модуля), поэтому запрашивает страницы, пока не наберёт
+    `total`, а не один раз с расчётом на «и так всё придёт»."""
+    collected: list[dict] = []
+    total = 0
+    page = 1
+    while True:
+        response = requests.get(
+            f"{BASE_URL}/EstimatedPrice/RimWorkerSalaryRegistry",
+            params={
+                "countrySubjectId": _subject_id_for_zone(price_zone_id),
+                "priceZoneId": price_zone_id,
+                "periodId": period_id,
+                "search": "",
+                "authorityId": "null",
+                "refresh": "{}",
+                "value": "",
+                "page": page,
+                "take": page_size,
+                "sort": "{}",
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        total = data.get("total", 0)
+        items = data.get("items", [])
+        collected.extend(items)
+        if not items or len(collected) >= total:
+            break
+        page += 1
+    return json.dumps({"items": collected, "total": total}, ensure_ascii=False).encode("utf-8")
 
 
 def fetch_gosr_report(price_zone_id: int, period_id: int, timeout: int = 120) -> bytes:

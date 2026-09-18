@@ -49,6 +49,26 @@ def parse_current_prices_json(raw_json: bytes | str) -> dict[str, float]:
     return prices
 
 
+def parse_worker_salary_registry(raw_json: bytes | str) -> dict[str, float]:
+    """`GET .../RimWorkerSalaryRegistry` — плоский список (не группированный,
+    в отличие от материалов/машин): код разряда рабочего (`1-100-XX`) или
+    машиниста (`4-100-XXX`) -> сметная цена, руб./чел.-ч.
+
+    Отдать этот словарь можно прямо в `current_prices` у `pricing.py` —
+    трудозатраты рабочих ничем принципиально не отличаются от текущей цены
+    материала: это тоже готовая опубликованная сметная цена, не требующая
+    применения индекса ГОСР. Про машинистов — см. CLAUDE.md, «Известные
+    пробелы»: коды `4-100-XXX` тоже есть в этом реестре, но не подтверждено,
+    что просто подставить их сюда достаточно (не выяснена точная формула
+    объединения с `PriceCostWithoutSalary` машино-часа)."""
+    data = json.loads(raw_json)
+    return {
+        item["code"]: float(item["salary"])
+        for item in data.get("items", [])
+        if item.get("code") and item.get("salary") is not None
+    }
+
+
 def parse_gosr_workbook(xlsx_bytes: bytes) -> dict[str, GosrIndexEntry]:
     """Оба листа отчёта (материалы/изделия/оборудование — лист 1, машины и
     механизмы — лист 2) имеют одинаковую структуру столбцов: код, название,

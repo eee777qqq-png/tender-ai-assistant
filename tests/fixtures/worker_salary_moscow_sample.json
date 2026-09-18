@@ -1,0 +1,29 @@
+{
+  "total": 4,
+  "items": [
+    {
+      "code": "1-100-38",
+      "salaryRateName": "Средний разряд работы 3,8",
+      "salaryRateRank": "3.8",
+      "salary": "723.54"
+    },
+    {
+      "code": "1-100-10",
+      "salaryRateName": "Средний разряд работы 1,0",
+      "salaryRateRank": "1.0",
+      "salary": "552.32"
+    },
+    {
+      "code": "4-100-060",
+      "salaryRateName": "Машинист 6 разряда",
+      "salaryRateRank": "6.0",
+      "salary": "994.18"
+    },
+    {
+      "code": "4-100-040",
+      "salaryRateName": "Машинист 4 разряда",
+      "salaryRateRank": "4.0",
+      "salary": "740.11"
+    }
+  ]
+}
