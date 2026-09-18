@@ -18,6 +18,11 @@ fgiscs.minstroyrf.ru/prices для Москвы, 3 квартал 2026 года.
 выбранного продукта и у одного не расшифрованного кода ГЭСН («2»,
 см. CLAUDE.md, «Известные пробелы»).
 
+**Дополнено вечером 2026-09-18** — оплата труда машиниста через
+`LabourMach`/`DriverCode` (`MachineLabourInfo`). Логика подтверждена пока
+только устно на звонке со Smetrix, письменного подтверждения нет — см.
+`pricing.py` и CLAUDE.md, «Известные пробелы», п.12, не закрыт.
+
 Печатает результат каждого шага при запуске с `pytest -s`, по аналогии с
 `tests/test_end_to_end_pipeline.py`.
 """
@@ -27,12 +32,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+import pytest
+
 from quality_control import AuditReadinessTracker, CategorizedDiscrepancyLog
 from smeta_estimator import (
     AGENT_NAME,
     apply_prices,
     match_work_item,
     parse_current_prices_json,
+    parse_fsbc_machine_labour_xml,
     parse_fsbc_machines_xml,
     parse_fsbc_materials_xml,
     parse_gesn_xml,
@@ -67,6 +75,9 @@ def test_end_to_end_search_price_and_expert_review_for_a_roofing_work_item():
     }
     print(f"  Загружено текущих цен/ставок по кодам ресурсов: {len(current_prices)}")
 
+    machine_labour = parse_fsbc_machine_labour_xml((FIXTURES / "fsbc_machines_sample.xml").read_bytes())
+    print(f"  Загружено LabourMach/DriverCode по машинным кодам: {len(machine_labour)}")
+
     query = "устройство кровли на битумной мастике с защитным слоем из гравия"
     print(f"\n=== Поиск кандидатов по тексту работы: {query!r} ===")
     result = match_work_item(catalog, query, TENDER_PURCHASE_NUMBER)
@@ -79,6 +90,7 @@ def test_end_to_end_search_price_and_expert_review_for_a_roofing_work_item():
         current_prices=current_prices,
         gosr_index=gosr_index,
         resource_base_prices=resource_base_prices,
+        machine_labour=machine_labour,
     )
     result.candidates = priced_candidates
     for c in result.candidates:
@@ -91,7 +103,8 @@ def test_end_to_end_search_price_and_expert_review_for_a_roofing_work_item():
         for r in priced.resolutions:
             if r.source == "unresolved":
                 continue
-            print(f"      {r.resource_code} [{r.source}] {r.resource_name}: {r.unit_price:,.2f} руб./ед.")
+            wage_note = f" (из них зарплата машиниста: {r.machinist_wage_added:,.2f})" if r.machinist_wage_added else ""
+            print(f"      {r.resource_code} [{r.source}] {r.resource_name}: {r.unit_price:,.2f} руб./ед.{wage_note}")
         if priced.unresolved_resource_codes:
             print(f"      Не определена цена: {priced.unresolved_resource_codes}")
 
@@ -112,7 +125,23 @@ def test_end_to_end_search_price_and_expert_review_for_a_roofing_work_item():
     assert any(r.source == "gosr_index" for r in top.priced.resolutions)
     assert any(r.source == "current_price" for r in top.priced.resolutions)
     # После добавления оплаты труда и текущих цен на машины неопределённой
-    # остаётся цена только у категорий материалов без выбранного продукта и
-    # у нерасшифрованного кода ГЭСН "2" (см. CLAUDE.md, «Известные пробелы»).
-    assert set(top.priced.unresolved_resource_codes) <= {"2", "01.2.03.03", "12.1.02.15"}
+    # остаётся цена только у категорий материалов без выбранного продукта,
+    # у нерасшифрованного кода ГЭСН "2" (см. CLAUDE.md, «Известные пробелы»)
+    # и у погрузчика 91.06.05-011: его текущая цена есть, но ставки
+    # машиниста-водителя погрузчика (4-100-050) нет в тестовой фикстуре
+    # worker_salary_moscow_sample.json — честно unresolved, не тихо занижен
+    # на стоимость оператора (см. добавку LabourMach в pricing.py).
+    assert set(top.priced.unresolved_resource_codes) <= {"2", "01.2.03.03", "12.1.02.15", "91.06.05-011"}
     assert log.for_agent(AGENT_NAME) == []
+
+    # Оплата труда машиниста добавлена для кранов и грузовика (LabourMach=1,
+    # DriverCode есть — 4-100-060/4-100-040 из фикстуры worker_salary),
+    # но не для битумного котла (LabourMach=0, самоходное электрическое
+    # оборудование без отдельного оператора). Логика — см. models.
+    # MachineLabourInfo: подтверждена устно, не письменно, пересмотреть при
+    # письменном ответе Smetrix, если он разойдётся.
+    by_code = {r.resource_code: r for r in top.priced.resolutions}
+    assert by_code["91.05.01-017"].machinist_wage_added == pytest.approx(994.18)  # башенный кран
+    assert by_code["91.05.05-015"].machinist_wage_added == pytest.approx(994.18)  # кран на автоходу
+    assert by_code["91.14.02-001"].machinist_wage_added == pytest.approx(740.11)  # автомобиль бортовой
+    assert by_code["91.08.04-021"].machinist_wage_added == 0.0  # битумный котёл — LabourMach=0

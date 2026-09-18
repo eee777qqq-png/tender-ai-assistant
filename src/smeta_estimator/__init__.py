@@ -7,6 +7,7 @@ from .fsnb_client import (
 )
 from .fsnb_parser import (
     apply_prices,
+    parse_fsbc_machine_labour_xml,
     parse_fsbc_machines_xml,
     parse_fsbc_materials_xml,
     parse_gesn_xml,
@@ -15,6 +16,7 @@ from .matcher import AGENT_NAME, match_work_item, review_match_result
 from .models import (
     GesnResourceUsage,
     GesnWorkItem,
+    MachineLabourInfo,
     MatchResult,
     RateCandidate,
     RegionalPriceResult,
@@ -55,6 +57,7 @@ __all__ = [
     "GesnResourceUsage",
     "GesnWorkItem",
     "GosrIndexEntry",
+    "MachineLabourInfo",
     "MatchResult",
     "RateCandidate",
     "RegionalPriceResult",
@@ -74,6 +77,7 @@ __all__ = [
     "fetch_worker_salary_registry",
     "match_work_item",
     "parse_current_prices_json",
+    "parse_fsbc_machine_labour_xml",
     "parse_fsbc_machines_xml",
     "parse_fsbc_materials_xml",
     "parse_gesn_xml",

@@ -23,13 +23,23 @@ CLAUDE.md, «Известные пробелы»):
 данных ФСНБ-2022 задваивало пересчёт. Правильный источник — «Индексы по
 группам однородных строительных ресурсов (ГОСР)», найден и подключён
 (`regional_pricing_client.py`, `regional_pricing_parser.py`).
+
+**Оплата труда машиниста (`machine_labour`, необязательный параметр).**
+Для машинных ресурсов, после определения их собственной цены по приоритету
+выше, дополнительно прибавляется `labour_mach × текущая_ставка(driver_code)`
+из `current_prices` (тот же `RimWorkerSalaryRegistry`, что уже используется
+для рабочих) — см. `MachineLabourInfo`. **Логика подтверждена устно на
+звонке со Smetrix, 2026-09-18 — письменного подтверждения пока нет** (см.
+CLAUDE.md, «Известные пробелы», п.12, не закрыт). Если ставка машиниста
+нужна (`labour_mach > 0`), но не нашлась в `current_prices` — ресурс честно
+уходит в `unresolved`, а не тихо остаётся без зарплаты в цене.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
 
-from .models import RateCandidate, RegionalPriceResult, ResourcePriceResolution
+from .models import MachineLabourInfo, RateCandidate, RegionalPriceResult, ResourcePriceResolution
 from .regional_pricing_parser import GosrIndexEntry
 
 
@@ -72,6 +82,7 @@ def price_candidate_for_region(
     current_prices: dict[str, float],
     gosr_index: dict[str, GosrIndexEntry],
     resource_base_prices: dict[str, float],
+    machine_labour: dict[str, MachineLabourInfo] | None = None,
 ) -> RateCandidate:
     """`resource_base_prices` — код ресурса -> базисная цена на 01.01.2022,
     то, что уже посчитано `fsnb_parser.parse_fsbc_materials_xml`/
@@ -80,8 +91,14 @@ def price_candidate_for_region(
     остаются в `unresolved_resource_codes`, как и в `base_price` самого
     `GesnWorkItem` (см. CLAUDE.md, «Известные пробелы»).
 
+    `machine_labour` — код машинного ресурса -> `MachineLabourInfo`
+    (`fsnb_parser.parse_fsbc_machine_labour_xml`), необязательный: без него
+    поведение как раньше, без добавки оплаты труда машиниста (см. докстринг
+    модуля про то, что эта добавка подтверждена пока только устно).
+
     Возвращает **новый** объект `RateCandidate` (не мутирует исходный).
     """
+    machine_labour = machine_labour or {}
     resolutions: list[ResourcePriceResolution] = []
     total = 0.0
 
@@ -116,6 +133,28 @@ def price_candidate_for_region(
 
         resolution.resource_name = usage.resource_name
         resolution.quantity = usage.quantity
+
+        labour = machine_labour.get(usage.resource_code)
+        if labour is not None and labour.labour_mach > 0:
+            wage_rate = current_prices.get(labour.driver_code) if labour.driver_code else None
+            if wage_rate is None:
+                # Нужна ставка машиниста (labour_mach > 0), но её нет в
+                # current_prices — честно unresolved, а не цена машины без
+                # оплаты труда оператора, выданная как будто полная.
+                resolutions.append(
+                    ResourcePriceResolution(
+                        resource_code=usage.resource_code,
+                        resource_name=usage.resource_name,
+                        quantity=usage.quantity,
+                        unit_price=None,
+                        source="unresolved",
+                    )
+                )
+                continue
+            wage_addition = labour.labour_mach * wage_rate
+            resolution.unit_price = resolution.unit_price + wage_addition  # type: ignore[operator]
+            resolution.machinist_wage_added = wage_addition
+
         resolutions.append(resolution)
         total += resolution.unit_price * usage.quantity  # type: ignore[operator]
 
@@ -132,10 +171,11 @@ def price_candidates_for_region(
     current_prices: dict[str, float],
     gosr_index: dict[str, GosrIndexEntry],
     resource_base_prices: dict[str, float],
+    machine_labour: dict[str, MachineLabourInfo] | None = None,
 ) -> list[RateCandidate]:
     return [
         price_candidate_for_region(
-            c, region_name, period_label, current_prices, gosr_index, resource_base_prices
+            c, region_name, period_label, current_prices, gosr_index, resource_base_prices, machine_labour
         )
         for c in candidates
     ]

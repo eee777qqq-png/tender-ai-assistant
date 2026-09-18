@@ -67,6 +67,7 @@ from smeta_estimator import (
     build_cost_estimate,
     match_work_item,
     parse_current_prices_json,
+    parse_fsbc_machine_labour_xml,
     parse_fsbc_machines_xml,
     parse_fsbc_materials_xml,
     parse_gesn_xml,
@@ -215,6 +216,10 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
         **parse_current_prices_json((FIXTURES / "current_prices_moscow_machines_sample.json").read_bytes()),
         **parse_worker_salary_registry((FIXTURES / "worker_salary_moscow_sample.json").read_bytes()),
     }
+    # Оплата труда машиниста через LabourMach/DriverCode — подтверждено пока
+    # только устно на звонке со Smetrix, не письменно (см. CLAUDE.md,
+    # «Известные пробелы», п.12, не закрыт; models.MachineLabourInfo).
+    machine_labour = parse_fsbc_machine_labour_xml((FIXTURES / "fsbc_machines_sample.xml").read_bytes())
 
     match_result = match_work_item(
         catalog, "устройство кровли на битумной мастике с защитным слоем из гравия", tender.purchase_number
@@ -226,6 +231,7 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
         current_prices=current_prices,
         gosr_index=gosr_index,
         resource_base_prices=resource_base_prices,
+        machine_labour=machine_labour,
     )
     top = match_result.top_candidate()
 

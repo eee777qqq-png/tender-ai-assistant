@@ -66,11 +66,43 @@ class GesnWorkItem:
 
 
 @dataclass
+class MachineLabourInfo:
+    """Трудозатраты машиниста на единицу машино-часа конкретной машины —
+    из атрибутов `LabourMach`/`DriverCode` в ФСБЦ_Маш.xml (`fsnb_parser.
+    parse_fsbc_machine_labour_xml`).
+
+    **Подтверждено устно на звонке со Smetrix, 2026-09-18 — письменного
+    подтверждения пока нет** (см. CLAUDE.md, «Известные пробелы», п.12,
+    не закрыт до письменного ответа). Практик подтвердил: это не единая
+    формула на все машины, а свойство конкретной позиции — для одной
+    техники оплата труда машиниста уже учтена в её собственной цене
+    (`labour_mach == 0`, обычно когда `driver_code` вообще не указан —
+    самоходное/электрическое оборудование без отдельного оператора), для
+    другой — не учтена и её нужно добавить отдельно (`labour_mach > 0`,
+    на практике встречалось только `1.0`), умножив на текущую ставку
+    машиниста по `driver_code` из того же `RimWorkerSalaryRegistry`, что
+    уже используется для рабочих (`regional_pricing_client.
+    fetch_worker_salary_registry`). **Если письменное подтверждение будет
+    противоречить этой логике — пересмотреть `pricing.py`, не считать
+    вопрос закрытым только на основании этого класса.**
+    """
+
+    resource_code: str
+    labour_mach: float
+    driver_code: str | None
+
+
+@dataclass
 class ResourcePriceResolution:
     """Как определилась цена одного ресурса при региональном пересчёте —
     приоритет из `pricing.resolve_resource_unit_price()`: текущая цена
     напрямую, иначе базисная цена (01.01.2022) × индекс ГОСР для группы
-    этого ресурса, иначе не определилась вовсе."""
+    этого ресурса, иначе не определилась вовсе. Для машинных ресурсов
+    `pricing.price_candidate_for_region()` может дополнительно прибавить
+    оплату труда машиниста через `MachineLabourInfo` — `machinist_wage_added`
+    показывает, сколько из `unit_price` пришлось на эту добавку (0.0 —
+    либо не машина, либо `labour_mach == 0`, то есть уже учтено в
+    собственной цене машины, см. `MachineLabourInfo`)."""
 
     resource_code: str
     resource_name: str
@@ -79,6 +111,7 @@ class ResourcePriceResolution:
     source: str  # "current_price" | "gosr_index" | "unresolved"
     index_value: float | None = None
     group_name: str | None = None
+    machinist_wage_added: float = 0.0
 
     @property
     def line_total(self) -> float | None:

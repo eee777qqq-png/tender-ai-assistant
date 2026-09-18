@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
-from smeta_estimator.models import GesnResourceUsage, RateCandidate
+from smeta_estimator.models import GesnResourceUsage, MachineLabourInfo, RateCandidate
 from smeta_estimator.pricing import price_candidate_for_region, price_candidates_for_region
 from smeta_estimator.regional_pricing_parser import GosrIndexEntry
 
@@ -107,6 +107,100 @@ def test_original_candidate_is_not_mutated():
     )
 
     assert candidate.priced is None
+
+
+# -- добавка оплаты труда машиниста через LabourMach/DriverCode (п.12
+# «Известных пробелов», подтверждено пока только устно на звонке со
+# Smetrix, не письменно — см. models.MachineLabourInfo) -------------------
+
+
+def test_machinist_wage_is_added_when_labour_mach_is_positive():
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="CRANE", resource_name="кран", quantity=0.24)]
+    )
+    machine_labour = {"CRANE": MachineLabourInfo(resource_code="CRANE", labour_mach=1.0, driver_code="4-100-060")}
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={"CRANE": 622.62, "4-100-060": 994.18},
+        gosr_index={},
+        resource_base_prices={},
+        machine_labour=machine_labour,
+    )
+
+    resolution = priced.priced.resolutions[0]
+    assert resolution.unit_price == pytest.approx(622.62 + 994.18)
+    assert resolution.machinist_wage_added == pytest.approx(994.18)
+    assert resolution.source == "current_price"  # добавка не меняет источник базовой цены машины
+    assert priced.priced.total_price == pytest.approx((622.62 + 994.18) * 0.24)
+
+
+def test_no_machinist_wage_added_when_labour_mach_is_zero():
+    """Электрическое/самоходное оборудование без отдельного оператора —
+    LabourMach=0, driver_code обычно вообще не указан."""
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="BOILER", resource_name="котёл битумный", quantity=5.8)]
+    )
+    machine_labour = {"BOILER": MachineLabourInfo(resource_code="BOILER", labour_mach=0.0, driver_code=None)}
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={"BOILER": 95.25},
+        gosr_index={},
+        resource_base_prices={},
+        machine_labour=machine_labour,
+    )
+
+    resolution = priced.priced.resolutions[0]
+    assert resolution.unit_price == pytest.approx(95.25)
+    assert resolution.machinist_wage_added == 0.0
+
+
+def test_missing_machinist_wage_rate_marks_resource_unresolved_not_underpriced():
+    """labour_mach > 0, но ставки для driver_code нет в current_prices —
+    честный unresolved, не цена машины без оплаты труда оператора."""
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="CRANE", resource_name="кран", quantity=0.24)]
+    )
+    machine_labour = {"CRANE": MachineLabourInfo(resource_code="CRANE", labour_mach=1.0, driver_code="4-100-060")}
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={"CRANE": 622.62},  # ставки 4-100-060 нет
+        gosr_index={},
+        resource_base_prices={},
+        machine_labour=machine_labour,
+    )
+
+    assert priced.priced.unresolved_resource_codes == ["CRANE"]
+    assert priced.priced.total_price == 0.0
+
+
+def test_machine_labour_defaults_to_no_addition_when_not_passed():
+    """Обратная совместимость: без `machine_labour` поведение как раньше —
+    никакой добавки, даже если ресурс технически машина."""
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="CRANE", resource_name="кран", quantity=0.24)]
+    )
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={"CRANE": 622.62, "4-100-060": 994.18},
+        gosr_index={},
+        resource_base_prices={},
+    )
+
+    resolution = priced.priced.resolutions[0]
+    assert resolution.unit_price == pytest.approx(622.62)
+    assert resolution.machinist_wage_added == 0.0
 
 
 def test_price_candidates_for_region_prices_every_candidate_in_the_list():

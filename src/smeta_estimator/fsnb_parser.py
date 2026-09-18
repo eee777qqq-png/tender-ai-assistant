@@ -20,13 +20,17 @@
   оплаты труда по регионам, как и трудозатраты рабочих) и в `base_price`
   не входит — см. CLAUDE.md, «Известные пробелы». Надбавка `WithRelocation`
   (перебазировка) — отдельный, более редкий случай, тоже не учтена.
+- `parse_fsbc_machine_labour_xml` — тот же файл, что и выше, но
+  извлекает `LabourMach`/`DriverCode` для добавки оплаты труда машиниста
+  в `pricing.py` (см. `MachineLabourInfo` — логика подтверждена пока
+  только устно, не письменно, см. CLAUDE.md).
 """
 
 from __future__ import annotations
 
 from xml.etree import ElementTree as ET
 
-from .models import GesnResourceUsage, GesnWorkItem
+from .models import GesnResourceUsage, GesnWorkItem, MachineLabourInfo
 
 
 def parse_gesn_xml(xml_bytes: bytes) -> list[GesnWorkItem]:
@@ -120,6 +124,29 @@ def parse_fsbc_machines_xml(xml_bytes: bytes) -> dict[str, float]:
             continue
         prices[code] = _to_float(price_el.get("PriceCostWithoutSalary"))
     return prices
+
+
+def parse_fsbc_machine_labour_xml(xml_bytes: bytes) -> dict[str, MachineLabourInfo]:
+    """Тот же файл, что `parse_fsbc_machines_xml` — здесь вместо цены
+    вытаскиваются `LabourMach`/`DriverCode`, нужные `pricing.
+    price_candidate_for_region()` для добавки оплаты труда машиниста (см.
+    `MachineLabourInfo`, включая пометку про устное/неписьменное
+    подтверждение этой логики). `DriverCode` отсутствует у машин без
+    отдельного оператора (например, самоходное электрическое оборудование)
+    — в этом случае `driver_code=None`, что соответствует `LabourMach=0`."""
+    root = ET.fromstring(xml_bytes)
+    labour: dict[str, MachineLabourInfo] = {}
+    for res_el in root.iter("Resource"):
+        code = res_el.get("Code")
+        price_el = res_el.find("Prices/Price")
+        if not code or price_el is None:
+            continue
+        labour[code] = MachineLabourInfo(
+            resource_code=code,
+            labour_mach=_to_float(price_el.get("LabourMach")),
+            driver_code=price_el.get("DriverCode") or None,
+        )
+    return labour
 
 
 def apply_prices(work_items: list[GesnWorkItem], resource_prices: dict[str, float]) -> None:
