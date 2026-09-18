@@ -3,9 +3,12 @@
 Источник данных — ФГИС ЦС (fgiscs.minstroyrf.ru), открытый доступ без
 авторизации, проверено вживую 2026-09-18 (см. `docs/agent4-ai-matching-feasibility.md`):
 ГЭСН (нормы расхода ресурсов на единицу работы) + ФСБЦ (цены материалов и
-машино-часов) + ежеквартальные региональные индексы пересчёта. Обязательное
-условие открытой лицензии данных ФГИС ЦС — ссылка на первоисточник при
-использовании, см. `ATTRIBUTION_NOTICE` в `fsnb_client.py`.
+машино-часов, базисный уровень цен на 01.01.2022 — подтверждено официальным
+разъяснением Минстроя, приказ №1046/пр от 30.12.2021, тот же приказ, которым
+утверждена сама ФСНБ-2022) + ежеквартальные индексы по группам однородных
+строительных ресурсов (ГОСР) для регионального пересчёта, см. `pricing.py`.
+Обязательное условие открытой лицензии данных ФГИС ЦС — ссылка на
+первоисточник при использовании, см. `ATTRIBUTION_NOTICE` в `fsnb_client.py`.
 
 Важно про `base_price`: считается только по тем ресурсам ГЭСН, для которых
 нашлась прямая цена в ФСБЦ (`<Resource Code="...">`). Это НЕ полная
@@ -28,7 +31,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 
 @dataclass
@@ -63,20 +66,63 @@ class GesnWorkItem:
 
 
 @dataclass
+class ResourcePriceResolution:
+    """Как определилась цена одного ресурса при региональном пересчёте —
+    приоритет из `pricing.resolve_resource_unit_price()`: текущая цена
+    напрямую, иначе базисная цена (01.01.2022) × индекс ГОСР для группы
+    этого ресурса, иначе не определилась вовсе."""
+
+    resource_code: str
+    resource_name: str
+    quantity: float
+    unit_price: float | None
+    source: str  # "current_price" | "gosr_index" | "unresolved"
+    index_value: float | None = None
+    group_name: str | None = None
+
+    @property
+    def line_total(self) -> float | None:
+        return None if self.unit_price is None else self.unit_price * self.quantity
+
+
+@dataclass
+class RegionalPriceResult:
+    """Итог пересчёта одного кандидата на конкретный регион и квартал —
+    сумма по ресурсам, для которых удалось определить цену, плюс полная
+    видимость того, как именно определилась цена каждого ресурса."""
+
+    region_name: str
+    period_label: str
+    total_price: float
+    resolutions: list[ResourcePriceResolution] = field(default_factory=list)
+
+    @property
+    def unresolved_resource_codes(self) -> list[str]:
+        return [r.resource_code for r in self.resolutions if r.source == "unresolved"]
+
+    def is_fully_priced(self) -> bool:
+        return not self.unresolved_resource_codes
+
+
+@dataclass
 class RateCandidate:
-    """Один кандидат в выдаче поиска — с опциональной региональной ценой."""
+    """Один кандидат в выдаче поиска — с опциональной региональной ценой
+    (`priced`, см. `pricing.price_candidate_for_region()`).
+
+    `resources` скопирован с исходного `GesnWorkItem` — нужен, чтобы посчитать
+    региональную цену *по каждому ресурсу отдельно* (текущая цена или свой
+    ГОСР-индекс для его группы), а не одним общим множителем на всю позицию.
+    """
 
     code: str
     name: str
     unit: str
     base_price: float
     match_score: float
+    resources: list[GesnResourceUsage] = field(default_factory=list)
     unpriced_resource_codes: list[str] = field(default_factory=list)
     abstract_resource_codes: list[str] = field(default_factory=list)
-    regional_price: float | None = None
-    region_name: str | None = None
-    index_value: float | None = None
-    index_as_of: date | None = None
+    priced: RegionalPriceResult | None = None
 
 
 @dataclass

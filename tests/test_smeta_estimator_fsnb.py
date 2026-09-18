@@ -69,8 +69,10 @@ def test_parse_fsbc_materials_and_machines_return_real_prices():
 
     assert materials["02.2.01.02-1042"] == pytest.approx(1174.99)  # гравий
     assert materials["01.3.02.09-0022"] == pytest.approx(41.38)  # пропан-бутан
-    # машино-час = зарплата машиниста + прочие затраты без зарплаты
-    assert machines["91.05.01-017"] == pytest.approx(451.93 + 622.62)
+    # Только PriceCostWithoutSalary, без зарплаты машиниста (SalaryMach) —
+    # именно это число совпадает с базисной ценой в отчёте ГОСР (см.
+    # regional_pricing_parser.py), а сумма с зарплатой — нет.
+    assert machines["91.05.01-017"] == pytest.approx(622.62)
 
 
 def test_apply_prices_computes_base_price_and_flags_unresolved_resources():

@@ -52,6 +52,7 @@ def search_candidates(
             unit=item.unit,
             base_price=item.base_price,
             match_score=score,
+            resources=list(item.resources),
             unpriced_resource_codes=list(item.unpriced_resource_codes),
             abstract_resource_codes=list(item.abstract_resource_codes),
         )

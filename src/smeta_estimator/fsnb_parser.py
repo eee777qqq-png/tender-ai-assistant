@@ -8,11 +8,18 @@
   ... → Таблица → NameGroup), с составом ресурсов на единицу работы.
 - `parse_fsbc_materials_xml` — плоские `<Resource Code="..."><Prices><Price
   Cost="..."/>` для материалов/оборудования.
-- `parse_fsbc_machines_xml` — machine-часы устроены иначе: цена не одним
+- `parse_fsbc_machines_xml` — машино-часы устроены иначе: цена не одним
   числом, а `SalaryMach` (зарплата машиниста) + `PriceCostWithoutSalary`
-  (остальные затраты на машино-час) — эффективная ставка считается их суммой,
-  без учёта надбавки `WithRelocation` (перебазировка) — отдельный, более
-  редкий случай, здесь не учтён.
+  (остальные затраты на машино-час). Возвращается **только
+  `PriceCostWithoutSalary`** — не сумма. Подтверждено вживую 2026-09-18:
+  ровно это число (без зарплаты машиниста) совпадает с «базисной ценой на
+  01.01.2022 без учёта оплаты труда машинистов» в отчёте ГОСР
+  (`regional_pricing_parser.parse_gosr_workbook`) — то есть это правильная
+  базисная величина именно для последующего умножения на индекс ГОСР.
+  Зарплата машиниста (`SalaryMach`) требует отдельного источника (таблица
+  оплаты труда по регионам, как и трудозатраты рабочих) и в `base_price`
+  не входит — см. CLAUDE.md, «Известные пробелы». Надбавка `WithRelocation`
+  (перебазировка) — отдельный, более редкий случай, тоже не учтена.
 """
 
 from __future__ import annotations
@@ -111,9 +118,7 @@ def parse_fsbc_machines_xml(xml_bytes: bytes) -> dict[str, float]:
         price_el = res_el.find("Prices/Price")
         if not code or price_el is None:
             continue
-        salary = _to_float(price_el.get("SalaryMach"))
-        rest = _to_float(price_el.get("PriceCostWithoutSalary"))
-        prices[code] = salary + rest
+        prices[code] = _to_float(price_el.get("PriceCostWithoutSalary"))
     return prices
 
 
