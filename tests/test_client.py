@@ -110,6 +110,81 @@ def test_get_construction_documents_filters_by_okpd2(tmp_path):
     assert documents[0].okpd2_codes == ["41.20.10.110"]
 
 
+def test_get_construction_documents_extracts_reestr_number_when_present(tmp_path):
+    """Реестровый номер закупки — та же эвристика (поиск по имени тега),
+    что уже применяется к ОКПД2, не подтверждённая на реальных документах
+    ЕИС (сервис пока не отдаёт реальные данные, см. CLAUDE.md)."""
+    config = make_config(tmp_path)
+    classifier = ConstructionClassifier()
+
+    construction_doc = (
+        b"<Document><ReestrNumber>0173200001426000101</ReestrNumber>"
+        b"<OKPD2Code>41.20.10.110</OKPD2Code></Document>"
+    )
+    archive_bytes = make_zip_archive({"1.xml": construction_doc})
+    response_xml = RESPONSE_TEMPLATE.format(
+        archive_urls="<archiveUrl>https://example.invalid/a.zip</archiveUrl>"
+    )
+
+    with patch("requests.Session.post") as mock_post, patch("requests.Session.get") as mock_get:
+        mock_post.return_value = MagicMock(text=response_xml, raise_for_status=lambda: None)
+        mock_get.return_value = MagicMock(content=archive_bytes, raise_for_status=lambda: None)
+
+        client = EISClient(config, construction_classifier=classifier)
+        documents = client.get_construction_documents(date(2026, 9, 15))
+
+    assert len(documents) == 1
+    assert documents[0].reestr_number == "0173200001426000101"
+
+
+def test_get_construction_documents_leaves_reestr_number_none_without_a_match(tmp_path):
+    """Ни тега, похожего на реестровый номер, ни значения, похожего на него
+    по формату — честный `None`, не выдуманное значение."""
+    config = make_config(tmp_path)
+    classifier = ConstructionClassifier()
+
+    construction_doc = b"<Document><OKPD2Code>41.20.10.110</OKPD2Code></Document>"
+    archive_bytes = make_zip_archive({"1.xml": construction_doc})
+    response_xml = RESPONSE_TEMPLATE.format(
+        archive_urls="<archiveUrl>https://example.invalid/a.zip</archiveUrl>"
+    )
+
+    with patch("requests.Session.post") as mock_post, patch("requests.Session.get") as mock_get:
+        mock_post.return_value = MagicMock(text=response_xml, raise_for_status=lambda: None)
+        mock_get.return_value = MagicMock(content=archive_bytes, raise_for_status=lambda: None)
+
+        client = EISClient(config, construction_classifier=classifier)
+        documents = client.get_construction_documents(date(2026, 9, 15))
+
+    assert documents[0].reestr_number is None
+
+
+def test_reestr_number_extraction_ignores_organization_reg_num(tmp_path):
+    """`regNum` — номер регистрации ОРГАНИЗАЦИИ в примере официальной
+    инструкции, не реестровый номер закупки — не должен спутаться с ним,
+    даже если по формату (только цифры) похож."""
+    config = make_config(tmp_path)
+    classifier = ConstructionClassifier()
+
+    construction_doc = (
+        b"<Document><OrganizationInfo><RegNum>123456789012345678</RegNum></OrganizationInfo>"
+        b"<OKPD2Code>41.20.10.110</OKPD2Code></Document>"
+    )
+    archive_bytes = make_zip_archive({"1.xml": construction_doc})
+    response_xml = RESPONSE_TEMPLATE.format(
+        archive_urls="<archiveUrl>https://example.invalid/a.zip</archiveUrl>"
+    )
+
+    with patch("requests.Session.post") as mock_post, patch("requests.Session.get") as mock_get:
+        mock_post.return_value = MagicMock(text=response_xml, raise_for_status=lambda: None)
+        mock_get.return_value = MagicMock(content=archive_bytes, raise_for_status=lambda: None)
+
+        client = EISClient(config, construction_classifier=classifier)
+        documents = client.get_construction_documents(date(2026, 9, 15))
+
+    assert documents[0].reestr_number is None
+
+
 def test_get_construction_documents_requires_classifier(tmp_path):
     config = make_config(tmp_path)
     client = EISClient(config)

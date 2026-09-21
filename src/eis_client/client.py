@@ -22,14 +22,30 @@ logger = logging.getLogger(__name__)
 _OKPD2_TAG_RE = re.compile(r"okpd", re.IGNORECASE)
 _OKPD2_CODE_RE = re.compile(r"^\d{2}(\.\d{1,3}){0,3}$")
 
+# Реестровый номер закупки — та же эвристика (поиск по имени тега), что и
+# для ОКПД2 выше, и с тем же ограничением: точная XSD-схема содержимого
+# документов не входит в общедоступную инструкцию (см. докстринг
+# `_find_okpd2_codes`), поэтому это не подтверждённое на реальных
+# документах поле, а обоснованная попытка (см. `tender_adapter.py`).
+# Специально НЕ ловит `regNum` — по примеру в самой инструкции это номер
+# регистрации ОРГАНИЗАЦИИ, а не реестровый номер ЗАКУПКИ, это разные вещи.
+_REESTR_NUMBER_TAG_RE = re.compile(r"reestrnum", re.IGNORECASE)
+_REESTR_NUMBER_VALUE_RE = re.compile(r"^\d{15,25}$")
+
 
 @dataclass
 class ConstructionDocument:
-    """Документ из архива ЕИС, в котором нашёлся ОКПД2-код раздела «Строительство»."""
+    """Документ из архива ЕИС, в котором нашёлся ОКПД2-код раздела «Строительство».
+
+    `reestr_number` — тоже эвристика (см. `_find_reestr_number`), не
+    подтверждённая на реальных документах ЕИС (сервис пока не отдаёт
+    реальные данные, см. CLAUDE.md, «Известные пробелы», п.3) — `None`,
+    если не нашёлся."""
 
     archive_url: str
     file_name: str
     okpd2_codes: list[str] = field(default_factory=list)
+    reestr_number: str | None = None
 
 
 class EISClient:
@@ -105,6 +121,7 @@ class EISClient:
                             archive_url=archive_url,
                             file_name=file_name,
                             okpd2_codes=construction_codes,
+                            reestr_number=self._find_reestr_number(xml_bytes),
                         )
                     )
         return results
@@ -149,6 +166,25 @@ class EISClient:
                     if value and _OKPD2_CODE_RE.match(value.strip()):
                         codes.append(value.strip())
         return codes
+
+    @staticmethod
+    def _find_reestr_number(xml_bytes: bytes) -> str | None:
+        """Эвристический поиск реестрового номера закупки — см. докстринг
+        `_REESTR_NUMBER_TAG_RE`. Возвращает первое найденное значение или
+        `None`, честно, а не выдуманный номер."""
+        try:
+            root = ET.fromstring(xml_bytes)
+        except ET.ParseError:
+            return None
+
+        for el in root.iter():
+            tag = el.tag.split("}", 1)[-1] if "}" in el.tag else el.tag
+            if not _REESTR_NUMBER_TAG_RE.search(tag):
+                continue
+            for value in (el.text, *el.attrib.values()):
+                if value and _REESTR_NUMBER_VALUE_RE.match(value.strip()):
+                    return value.strip()
+        return None
 
     def close(self) -> None:
         self._session.close()
