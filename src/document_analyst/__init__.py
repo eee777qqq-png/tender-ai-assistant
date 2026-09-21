@@ -7,6 +7,7 @@ from .models import (
     SecurityRequirement,
     SubmissionTimeline,
 )
+from .review import review_document_analysis
 
 __all__ = [
     "AGENT_NAME",
@@ -17,4 +18,5 @@ __all__ = [
     "SecurityRequirement",
     "SubmissionTimeline",
     "extract_requirements",
+    "review_document_analysis",
 ]

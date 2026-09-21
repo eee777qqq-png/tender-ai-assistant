@@ -10,13 +10,19 @@ Edwin ответить да/нет по каждому пункту прямо �
   применённые версии базы расценок/законодательства). Подтверждение здесь —
   боевое: `y` реально вызывает `approve_update(..., approved=True)` и
   применяет версию, `n` требует причину и отклоняет её по-настоящему.
-- **Агент 3 (Аналитик документации)** — учебный пример, не реальная
-  очередь: у Агента 3 пока нет постоянного хранилища необработанных
-  результатов (см. CLAUDE.md, «Известные пробелы»), поэтому здесь
-  показываются три придуманных тестовых документа из `sample_documents.py`,
-  прогнанные через `extract_requirements()` "вживую" при каждом запуске.
-  Решение эксперта по ним не сохраняется между запусками — только
-  печатается в терминал, честно об этом предупреждаем.
+- **Агент 3 (Аналитик документации)** — учебный пример по источнику
+  документов, не реальная очередь: у Агента 3 пока нет постоянного
+  хранилища необработанных результатов (см. CLAUDE.md, «Известные
+  пробелы»), поэтому здесь показываются три придуманных тестовых документа
+  из `sample_documents.py`, прогнанные через `extract_requirements()`
+  "вживую" при каждом запуске. Само решение эксперта, однако, реально
+  подключено к общей инфраструктуре контроля качества — `y`/`n` вызывают
+  `document_analyst.review_document_analysis()`, которая прогоняет решение
+  через `AuditReadinessTracker`/`CategorizedDiscrepancyLog`, как и у
+  Агента 4 (`smeta_estimator.matcher.review_match_result`), а не только
+  выставляют `expert_reviewed` в памяти. Сама метрика (окно из 50 проверок)
+  не сохраняется между запусками CLI — только внутри одного запуска, тоже
+  из-за отсутствия постоянного хранилища у Агента 3.
 
 Использование:
     python src/review_queue.py
@@ -34,8 +40,10 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from document_analyst import ExtractedRequirements, extract_requirements
+from document_analyst import AGENT_NAME as DOCUMENT_ANALYST_AGENT_NAME
+from document_analyst import ExtractedRequirements, extract_requirements, review_document_analysis
 from document_analyst.sample_documents import SAMPLE_DOCUMENTS
+from quality_control import AuditReadinessTracker, CategorizedDiscrepancyLog, DiscrepancyCategory
 from regulatory_updates import PendingUpdate, RegulatoryUpdateStore
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -98,14 +106,18 @@ def _regulatory_update_item(store: RegulatoryUpdateStore, update: PendingUpdate)
 # -- Агент 3: извлечённые требования -------------------------------------------
 
 
-def build_document_analyst_items(documents: dict[str, str]) -> list[ReviewItem]:
+def build_document_analyst_items(
+    documents: dict[str, str], tracker: AuditReadinessTracker, discrepancy_log: CategorizedDiscrepancyLog
+) -> list[ReviewItem]:
     return [
-        _document_analyst_item(extract_requirements(purchase_number, text))
+        _document_analyst_item(extract_requirements(purchase_number, text), tracker, discrepancy_log)
         for purchase_number, text in documents.items()
     ]
 
 
-def _document_analyst_item(extracted: ExtractedRequirements) -> ReviewItem:
+def _document_analyst_item(
+    extracted: ExtractedRequirements, tracker: AuditReadinessTracker, discrepancy_log: CategorizedDiscrepancyLog
+) -> ReviewItem:
     lines = [f"Закупка: {extracted.tender_purchase_number}"]
 
     t = extracted.timeline
@@ -131,19 +143,31 @@ def _document_analyst_item(extracted: ExtractedRequirements) -> ReviewItem:
         lines.append("Скрытых рисков не найдено.")
 
     def approve(reviewer: str) -> None:
-        extracted.mark_expert_reviewed(reviewer=reviewer)
+        review_document_analysis(
+            extracted, reviewer=reviewer, tracker=tracker, discrepancy_log=discrepancy_log, approved=True
+        )
 
     def reject(reviewer: str, reason: str) -> None:
+        review_document_analysis(
+            extracted,
+            reviewer=reviewer,
+            tracker=tracker,
+            discrepancy_log=discrepancy_log,
+            approved=False,
+            category=DiscrepancyCategory.SIGNIFICANT,
+            issue="эксперт отклонил выдачу Агента 3 целиком",
+            expert_comment=reason,
+        )
         print(
-            f"  (Отклонение зафиксировано только в этом выводе — у Агента 3 пока нет "
-            f"постоянного хранилища результатов/причин отклонения, см. CLAUDE.md, "
-            f"«Известные пробелы». Причина: {reviewer} — {reason})"
+            f"  (Отклонение прогнано через метрику готовности и лог расхождений Агента 3, "
+            f"но не сохраняется между запусками CLI — у Агента 3 пока нет постоянного "
+            f"хранилища результатов, см. CLAUDE.md, «Известные пробелы». Причина: {reviewer} — {reason})"
         )
 
     return ReviewItem(
         section=(
-            "Агент 3 — извлечённые требования (ТЕСТОВЫЙ ПРИМЕР, не реальная очередь — "
-            "см. пояснение в шапке)"
+            "Агент 3 — извлечённые требования (документы тестовые, решение эксперта реально "
+            "прогоняется через контроль качества — см. пояснение в шапке)"
         ),
         title=f"Закупка {extracted.tender_purchase_number}",
         body_lines=lines,
@@ -202,9 +226,12 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     store = RegulatoryUpdateStore(args.db)
+    document_analyst_tracker = AuditReadinessTracker(DOCUMENT_ANALYST_AGENT_NAME)
+    document_analyst_log = CategorizedDiscrepancyLog()
+
     items = build_regulatory_update_items(store)
     if not args.skip_agent3_samples:
-        items += build_document_analyst_items(SAMPLE_DOCUMENTS)
+        items += build_document_analyst_items(SAMPLE_DOCUMENTS, document_analyst_tracker, document_analyst_log)
 
     if not items:
         print("Очередь пуста — проверять нечего.")
@@ -213,6 +240,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"В очереди {len(items)} пункт(ов).\n")
     for item in items:
         ask_decision(item, reviewer)
+
+    if not args.skip_agent3_samples:
+        stats = document_analyst_tracker.window_stats()
+        print(
+            f"Агент 3 за этот запуск: {stats['total']} проверок, "
+            f"без существенной корректировки {stats['ok_ratio']:.0%}, "
+            f"расхождений залогировано {len(document_analyst_log.for_agent(DOCUMENT_ANALYST_AGENT_NAME))} "
+            "(окно метрики не сохраняется между запусками, см. CLAUDE.md)."
+        )
 
     print("Очередь обработана.")
     return 0
