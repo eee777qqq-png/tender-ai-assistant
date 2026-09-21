@@ -1,7 +1,10 @@
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+import pytest
 
 from classifier import ConstructionClassifier, match_profile_to_tender
 from classifier.sample_tenders import SAMPLE_TENDERS
@@ -21,6 +24,7 @@ from onboarding import (
     TaxRegimeChoice,
     validate_profile,
 )
+from profitability_estimator import CostEstimate, estimate_profitability
 
 
 def make_ready_profile() -> ClientProfile:
@@ -77,12 +81,21 @@ def run_pipeline(profile: ClientProfile, purchase_number: str):
 
     package = assemble_document_package(profile, tender, extracted_requirements=extracted)
     completeness = check_completeness(package, tender)
-    return match, completeness, package
+    return match, completeness, package, extracted
+
+
+def run_profitability(profile: ClientProfile, purchase_number: str, extracted, total_cost: float = 6_000_000):
+    """Реальный вызов Агента 5 (не подставной объект) — та же схема, что в
+    tests/test_profitability_estimator.py: себестоимость передана вручную,
+    но обязательно с expert_reviewed=True (гейт Агента 4)."""
+    tender = find_tender(purchase_number)
+    cost_estimate = CostEstimate(total_cost=total_cost, as_of_date=date(2026, 9, 21), expert_reviewed=True)
+    return estimate_profitability(profile, tender, cost_estimate, extracted)
 
 
 def test_summary_for_ready_profile_reports_fit_and_pass_in_plain_language():
     profile = make_ready_profile()
-    match, completeness, package = run_pipeline(profile, "0173200001426000101")
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
 
     summary = build_client_summary(match, completeness, package)
 
@@ -108,7 +121,7 @@ def test_summary_for_ready_profile_reports_fit_and_pass_in_plain_language():
 def test_summary_lists_missing_documents_with_actionable_hints():
     profile = make_ready_profile()
     profile.legal.contact_person = ""  # намеренный пробел, как и в e2e-тесте
-    match, completeness, package = run_pipeline(profile, "0173200001426000101")
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
 
     summary = build_client_summary(match, completeness, package)
 
@@ -123,7 +136,7 @@ def test_summary_lists_missing_documents_with_actionable_hints():
 def test_summary_reports_when_tender_does_not_fit():
     profile = make_ready_profile()
     profile.region_code = "50"  # клиент работает не в том регионе, что закупка
-    match, completeness, package = run_pipeline(profile, "0173200001426000101")
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
 
     summary = build_client_summary(match, completeness, package)
 
@@ -134,8 +147,8 @@ def test_summary_reports_when_tender_does_not_fit():
 
 def test_rejects_mismatched_results_from_different_tenders():
     profile = make_ready_profile()
-    match, completeness, package = run_pipeline(profile, "0173200001426000101")
-    _, other_completeness, other_package = run_pipeline(profile, "0350200003426000202")
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
+    _, other_completeness, other_package, _ = run_pipeline(profile, "0350200003426000202")
 
     try:
         build_client_summary(match, other_completeness, package)
@@ -146,7 +159,7 @@ def test_rejects_mismatched_results_from_different_tenders():
 
 def test_render_summary_text_is_plain_and_includes_all_sections():
     profile = make_ready_profile()
-    match, completeness, package = run_pipeline(profile, "0173200001426000101")
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
     summary = build_client_summary(match, completeness, package)
 
     text = render_summary_text(summary)
@@ -166,12 +179,85 @@ def test_render_summary_text_always_includes_legal_boundary_notice():
     в каждой сводке, независимо от результатов остальных агентов —
     проверяем и на «подходит»-кейсе, и на «не подходит»-кейсе."""
     profile = make_ready_profile()
-    match, completeness, package = run_pipeline(profile, "0173200001426000101")
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
     fitting_summary = build_client_summary(match, completeness, package)
     assert CLIENT_SUMMARY_LEGAL_NOTICE in render_summary_text(fitting_summary)
 
     profile_not_fitting = make_ready_profile()
     profile_not_fitting.region_code = "50"
-    match2, completeness2, package2 = run_pipeline(profile_not_fitting, "0173200001426000101")
+    match2, completeness2, package2, extracted2 = run_pipeline(profile_not_fitting, "0173200001426000101")
     non_fitting_summary = build_client_summary(match2, completeness2, package2)
     assert CLIENT_SUMMARY_LEGAL_NOTICE in render_summary_text(non_fitting_summary)
+
+
+# -- Агент 5 (оценка выгоды) подключён к сводке — раньше маржа и риски
+# считались, но до собственника в сводке не доходили вообще. -----------------
+
+
+def test_summary_includes_profitability_when_provided():
+    profile = make_ready_profile()
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
+    profitability = run_profitability(profile, "0173200001426000101", extracted)
+
+    summary = build_client_summary(match, completeness, package, profitability)
+
+    assert summary.profitability is not None
+    assert summary.profitability.margin == profitability.margin
+    assert "маржа" in summary.profitability.margin_explanation.lower()
+    assert summary.profitability.risk_flags == profitability.risk_flags
+    assert summary.profitability.win_probability_note == profitability.win_probability_note
+
+
+def test_summary_omits_profitability_section_when_not_provided():
+    """Агент 5 — необязательный вход: без него сводка собирается как раньше,
+    просто без пункта про выгоду, а не с ошибкой или тихим нулём."""
+    profile = make_ready_profile()
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
+
+    summary = build_client_summary(match, completeness, package)
+
+    assert summary.profitability is None
+    assert "Ожидаемая выгода" not in render_summary_text(summary)
+
+
+def test_summary_handles_margin_none_honestly_not_as_missing_data():
+    """Режим налогообложения «Другое» — margin=None у Агента 5 по вполне
+    определённой причине (не хватка данных для расчёта налога), не как
+    признак того, что Агент 5 вообще не подключён."""
+    profile = make_ready_profile()
+    profile.financial.tax_regime = TaxRegimeChoice.OTHER_NEEDS_CLARIFICATION
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
+    profitability = run_profitability(profile, "0173200001426000101", extracted)
+    assert profitability.margin is None  # подтверждаем, что сценарий тот самый
+
+    summary = build_client_summary(match, completeness, package, profitability)
+
+    assert summary.profitability is not None
+    assert summary.profitability.margin is None
+    assert "не удалось посчитать" in summary.profitability.margin_explanation
+    assert any("уточнения с бухгалтером" in f for f in summary.profitability.risk_flags)
+
+
+def test_rejects_profitability_for_a_different_tender():
+    profile = make_ready_profile()
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
+    _, _, _, other_extracted = run_pipeline(profile, "0350200003426000202")
+    other_profitability = run_profitability(profile, "0350200003426000202", other_extracted)
+
+    with pytest.raises(ValueError, match="другой закупке"):
+        build_client_summary(match, completeness, package, other_profitability)
+
+
+def test_render_summary_text_shows_margin_and_risk_flags():
+    profile = make_ready_profile()
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
+    profitability = run_profitability(profile, "0173200001426000101", extracted)
+    summary = build_client_summary(match, completeness, package, profitability)
+
+    text = render_summary_text(summary)
+
+    assert "Ожидаемая выгода" in text
+    assert f"{profitability.margin:,.0f}".replace(",", " ") in text
+    for flag in profitability.risk_flags:
+        assert flag in text
+    assert profitability.win_probability_note in text

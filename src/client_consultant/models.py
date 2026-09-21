@@ -31,6 +31,18 @@ class PlainRisk:
 
 
 @dataclass
+class ProfitabilitySummary:
+    """Оценка выгоды (Агент 5), переизложенная для собственника — по тому
+    же принципу, что `PlainRisk` переизлагает `HiddenRisk` Агента 3: свой
+    текст для интерфейса, не прямой проброс `ProfitabilityEstimate`."""
+
+    margin: float | None  # None — маржу посчитать не удалось, см. risk_flags почему
+    margin_explanation: str
+    risk_flags: list[str] = field(default_factory=list)
+    win_probability_note: str = ""
+
+
+@dataclass
 class ClientSummary:
     """Готовая сводка по паре клиент+закупка."""
 
@@ -43,4 +55,8 @@ class ClientSummary:
     package_status_explanation: str
     missing_documents: list[MissingDocumentItem] = field(default_factory=list)
     risks: list[PlainRisk] = field(default_factory=list)
+    # None — Агент 5 не подключён к этому вызову (необязательный вход,
+    # см. build_client_summary()), не то же самое, что «маржа не посчитана»
+    # (это ProfitabilitySummary.margin=None при подключённом Агенте 5).
+    profitability: ProfitabilitySummary | None = None
     decision_reminder: str = ""

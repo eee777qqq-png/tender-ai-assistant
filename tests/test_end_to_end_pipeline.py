@@ -1,7 +1,12 @@
 """Сквозной прогон одного тестового профиля и одной тестовой закупки через
 всю связанную цепочку агентов: Классификатор (2) -> Аналитик документации
-(3) -> Сборщик документов (6) -> Проверка комплектности (7) -> Консультант
-для клиента (8) -> Сметчик (4) -> Оценка выгоды (5).
+(3) -> Сборщик документов (6) -> Проверка комплектности (7) -> Сметчик (4)
+-> Оценка выгоды (5) -> Консультант для клиента (8).
+
+Агент 8 вызывается последним (не сразу после Агента 7, как раньше) — именно
+чтобы собрать сводку с уже готовой оценкой выгоды Агента 5, а не без неё.
+До 2026-09-21 `build_client_summary()` вообще не принимала результат
+Агента 5 — маржа считалась, но до собственника в сводке не доходила.
 
 Агент 3 теперь реально подключён к Агенту 6 (не в обход него): пакет
 собирается с `extracted_requirements`, поэтому обязательность полей
@@ -190,18 +195,6 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
     assert "Обеспечение исполнения контракта (банковская гарантия)" in by_name
     assert len(package.hidden_risks) == 2
 
-    # Агент 8 — консультант для клиента: собирает итог всей цепочки в
-    # сводку для собственника, без кодов статусов и жаргона.
-    summary = build_client_summary(match, result, package)
-
-    print(f"\n=== Агент 8: Консультант для клиента ===")
-    print(render_summary_text(summary))
-
-    assert summary.tender_fits
-    assert summary.package_ready
-    assert summary.missing_documents == []
-    assert len(summary.risks) == 2
-
     # Агент 4 — сметчик: подбор расценки ГЭСН/ФСБЦ под одну позицию сметы
     # (капремонт кровли), региональный пересчёт цены и обязательное решение
     # эксперта — на настоящем фрагменте данных ФГИС ЦС по Москве.
@@ -292,6 +285,23 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
         tender.max_price - smeta_result.total_cost - profitability.security_cost - profitability.taxes,
         abs=0.5,
     )
+
+    # Агент 8 — консультант для клиента: собирает итог ВСЕЙ цепочки, включая
+    # маржу и риски Агента 5 — до 2026-09-21 маржа считалась, но до
+    # собственника в сводке не доходила вообще (Агент 8 не принимал
+    # `ProfitabilityEstimate` как вход).
+    summary = build_client_summary(match, result, package, profitability)
+
+    print(f"\n=== Агент 8: Консультант для клиента ===")
+    print(render_summary_text(summary))
+
+    assert summary.tender_fits
+    assert summary.package_ready
+    assert summary.missing_documents == []
+    assert len(summary.risks) == 2
+    assert summary.profitability is not None
+    assert summary.profitability.margin == profitability.margin
+    assert "Ожидаемая выгода" in render_summary_text(summary)
 
 
 def test_pipeline_fails_completeness_when_required_field_missing():

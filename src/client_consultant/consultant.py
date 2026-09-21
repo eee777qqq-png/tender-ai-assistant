@@ -5,6 +5,15 @@
 без структур данных), на случай если сводка выводится как есть, а не
 рендерится отдельным UI.
 
+`profitability` (результат Агента 5, `ProfitabilityEstimate`) — необязательный
+четвёртый вход, подключён 2026-09-21: раньше маржа и риски выгоды считались,
+но никуда не попадали дальше — до собственника в сводке они вообще не
+доходили, хотя показать их клиенту и есть весь смысл Агента 5. Необязательный,
+а не обязательный — по тому же принципу, что `extracted_requirements` у
+Агента 6: вызывающий код может собрать сводку без оценки выгоды (например,
+если Агент 4 для этой закупки ещё не прогонялся), но если она есть — сверяется
+на закупку/клиента и попадает в сводку как отдельный пункт «Ожидаемая выгода».
+
 Важно: это каркас. Переводы категорий скрытых рисков в «что это значит на
 практике» и подсказки «что сделать» для недостающих полей — фиксированные
 шаблоны на 5 категорий риска / известные сейчас поля пакета, а не
@@ -25,8 +34,9 @@ from completeness_check.models import CompletenessResult
 from document_analyst.models import HiddenRisk, RiskCategory
 from document_assembler.models import DocumentPackage
 from legal_boundaries import CLIENT_SUMMARY_LEGAL_NOTICE
+from profitability_estimator.models import ProfitabilityEstimate
 
-from .models import ClientSummary, MissingDocumentItem, PlainRisk
+from .models import ClientSummary, MissingDocumentItem, PlainRisk, ProfitabilitySummary
 
 DECISION_REMINDER = (
     "Это справка для ознакомления, а не рекомендация участвовать или отказаться. "
@@ -108,8 +118,31 @@ def _translate_risk(risk: HiddenRisk) -> PlainRisk:
     )
 
 
+def _translate_profitability(profitability: ProfitabilityEstimate) -> ProfitabilitySummary:
+    if profitability.margin is not None:
+        formatted = f"{profitability.margin:,.0f}".replace(",", " ")
+        margin_explanation = (
+            f"Ожидаемая маржа по этой закупке — примерно {formatted} руб. "
+            "(НМЦК минус оценочная себестоимость, стоимость обеспечения и налоги; "
+            "показательная оценка, не окончательная цифра — см. пометки ниже)."
+        )
+    else:
+        margin_explanation = (
+            "Маржу по этой закупке пока не удалось посчитать — см. пометки ниже, почему."
+        )
+    return ProfitabilitySummary(
+        margin=profitability.margin,
+        margin_explanation=margin_explanation,
+        risk_flags=list(profitability.risk_flags),
+        win_probability_note=profitability.win_probability_note,
+    )
+
+
 def build_client_summary(
-    match: MatchResult, completeness: CompletenessResult, package: DocumentPackage
+    match: MatchResult,
+    completeness: CompletenessResult,
+    package: DocumentPackage,
+    profitability: ProfitabilityEstimate | None = None,
 ) -> ClientSummary:
     if not (
         match.tender.purchase_number == completeness.tender_purchase_number == package.tender_purchase_number
@@ -125,6 +158,18 @@ def build_client_summary(
             f"Результаты агентов относятся к разным клиентам: "
             f"матчинг={match.client_id!r}, пакет={package.client_id!r}"
         )
+    if profitability is not None:
+        if profitability.tender_purchase_number != match.tender.purchase_number:
+            raise ValueError(
+                "Оценка выгоды Агента 5 относится к другой закупке: "
+                f"выгода={profitability.tender_purchase_number!r}, "
+                f"матчинг={match.tender.purchase_number!r}"
+            )
+        if profitability.client_id != match.client_id:
+            raise ValueError(
+                f"Оценка выгоды Агента 5 относится к другому клиенту: "
+                f"выгода={profitability.client_id!r}, матчинг={match.client_id!r}"
+            )
 
     if match.is_match:
         tender_fit_explanation = f"Закупка «{match.tender.name}» подходит компании — все условия участия выполняются."
@@ -143,6 +188,7 @@ def build_client_summary(
     ]
 
     risks = [_translate_risk(r) for r in package.hidden_risks]
+    profitability_summary = _translate_profitability(profitability) if profitability is not None else None
 
     return ClientSummary(
         client_id=match.client_id,
@@ -154,6 +200,7 @@ def build_client_summary(
         package_status_explanation=package_status_explanation,
         missing_documents=missing_documents,
         risks=risks,
+        profitability=profitability_summary,
         decision_reminder=DECISION_REMINDER,
     )
 
@@ -166,6 +213,13 @@ def render_summary_text(summary: ClientSummary) -> str:
     lines.append("")
     lines.append(f"1. Подходит ли закупка: {summary.tender_fit_explanation}")
     lines.append(f"2. Готовность документов: {summary.package_status_explanation}")
+
+    if summary.profitability is not None:
+        lines.append(f"3. Ожидаемая выгода: {summary.profitability.margin_explanation}")
+        for flag in summary.profitability.risk_flags:
+            lines.append(f"   - {flag}")
+        if summary.profitability.win_probability_note:
+            lines.append(f"   {summary.profitability.win_probability_note}")
 
     if summary.missing_documents:
         lines.append("")
