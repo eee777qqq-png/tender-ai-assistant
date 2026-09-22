@@ -1,0 +1,70 @@
+Доказательство для обращения в техподдержку ЕИС
+Симптом: сервис отвечает буквальным эхом отправленного запроса
+вместо getDocsByOrgRegionResponse с archiveUrl.
+
+Дата запроса (дата генерации этого файла): 2026-09-22
+Запрошенная дата документов (exactDate в запросе): 2026-09-21
+Endpoint: https://int.zakupki.gov.ru/eis-integration/services/getDocsIP
+consumer_type: individual_person
+org_region: 77
+subsystem_type: RGK
+document_type44: contract
+request_id (uuid в теле запроса): [ID REDACTED]
+HTTP статус ответа: 200
+Примечание: значение individualPerson_token в запросе ниже скрыто перед
+публикацией в git-репозитории (это открытый канал) — в реально
+отправленном запросе стоял настоящий токен аккаунта. При обращении в
+техподдержку ЕИС токен не обязателен: сервис уже идентифицирует
+запрос по вашему личному кабинету.
+
+======================================================================
+ЗАПРОС (то, что было отправлено на endpoint)
+======================================================================
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="https://int.zakupki.gov.ru/eis-integration/services/getDocsIP">
+  <soapenv:Header>
+    <individualPerson_token>[REDACTED — реальный токен подставлен при отправке, скрыт перед публикацией в репозитории]</individualPerson_token>
+  </soapenv:Header>
+  <soapenv:Body>
+    <ws:getDocsByOrgRegionRequest>
+      <index>
+        <id>[ID REDACTED]</id>
+        <createDateTime>2026-09-22T17:33:46.193</createDateTime>
+        <mode>PROD</mode>
+      </index>
+      <selectionParams>
+        <orgRegion>77</orgRegion>
+        <subsystemType>RGK</subsystemType>
+        <documentType44>contract</documentType44>
+        <periodInfo>
+          <exactDate>2026-09-21</exactDate>
+        </periodInfo>
+      </selectionParams>
+    </ws:getDocsByOrgRegionRequest>
+  </soapenv:Body>
+</soapenv:Envelope>
+
+======================================================================
+ЗАГОЛОВКИ ОТВЕТА
+======================================================================
+Date: Tue, 22 Sep 2026 14:33:47 GMT
+Server: Apache
+Set-Cookie: [COOKIES REDACTED]
+Content-Type: text/xml;charset=utf-8
+X-XSS-Protection: 1; mode=block
+X-Content-Type-Options: nosniff
+Content-Encoding: gzip
+Keep-Alive: timeout=10, max=100
+Connection: Keep-Alive
+Transfer-Encoding: chunked
+
+======================================================================
+ОТВЕТ (тело ответа сервиса, как получено)
+======================================================================
+<?xml version="1.0" encoding="UTF-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">   <soap:Header/>   <soap:Body>      <ws:getDocsByOrgRegionRequest xmlns:ws="https://int.zakupki.gov.ru/eis-integration/services/getDocsIP">         <index>            <id>[ID REDACTED]</id>            <createDateTime>2026-09-22T17:33:46.193</createDateTime>            <mode>PROD</mode>         </index>         <selectionParams>            <orgRegion>77</orgRegion>            <subsystemType>RGK</subsystemType>            <documentType44>contract</documentType44>            <periodInfo>               <exactDate>2026-09-21</exactDate>            </periodInfo>         </selectionParams>      </ws:getDocsByOrgRegionRequest>   </soap:Body></soap:Envelope>
+
+======================================================================
+ДИАГНОЗ
+======================================================================
+Похоже на эхо отправленного запроса: True
+Похоже на настоящий ответ (archiveUrl/…Response): False
