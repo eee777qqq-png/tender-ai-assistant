@@ -4,6 +4,7 @@
 Использование:
     python src/fetch_purchases.py --date 2026-09-15
     python src/fetch_purchases.py --date 2026-09-15 --out docs.csv
+    python src/fetch_purchases.py --date 2026-09-21 --save-raw data/raw
 
 Перед запуском заполните .env (см. .env.example) — нужны consumer_type
 (legal_entity/individual_person) и соответствующие ему учётные данные
@@ -53,6 +54,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Путь к CSV-файлу для сохранения результата (по умолчанию — вывод в консоль)",
     )
+    parser.add_argument(
+        "--save-raw",
+        type=Path,
+        default=None,
+        metavar="ПАПКА",
+        help="Сохранить скачанные архивы ЕИС как есть в эту папку (например data/raw) — "
+        "для ручного разбора структуры документов, см. src/inspect_eis_xml.py",
+    )
     return parser.parse_args()
 
 
@@ -70,7 +79,7 @@ def main() -> int:
     classifier = ConstructionClassifier()
 
     try:
-        with EISClient(config, construction_classifier=classifier) as client:
+        with EISClient(config, construction_classifier=classifier, raw_archive_dir=args.save_raw) as client:
             documents = client.get_construction_documents(args.date)
     except EISError as exc:
         logger.error("Ошибка при обращении к ЕИС: %s", exc)

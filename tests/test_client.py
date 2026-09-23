@@ -266,3 +266,21 @@ def test_legal_entity_archive_download_has_no_token_header(tmp_path):
         EISClient(make_config(tmp_path)).download_archive("https://example.invalid/a.zip")
 
     assert mock_get.call_args.kwargs["headers"] == {}
+
+
+def test_raw_archives_saved_and_unparsed_xml_counted(tmp_path, caplog):
+    import logging
+
+    archive_bytes = make_zip_archive({"ok.xml": b"<c/>", "broken.xml": b"not xml"})
+    response_xml = RESPONSE_TEMPLATE.format(archive_urls="<archiveUrl>https://example.invalid/a.zip</archiveUrl>")
+    raw_dir = tmp_path / "raw"
+
+    with patch("requests.Session.post") as mock_post, patch("requests.Session.get") as mock_get:
+        mock_post.return_value = MagicMock(text=response_xml, raise_for_status=lambda: None)
+        mock_get.return_value = MagicMock(content=archive_bytes, raise_for_status=lambda: None)
+        client = EISClient(make_ip_config(), construction_classifier=ConstructionClassifier(), raw_archive_dir=raw_dir)
+        with caplog.at_level(logging.INFO):
+            assert client.get_construction_documents(date(2026, 9, 21)) == []
+
+    assert (raw_dir / "2026-09-21_01.zip").read_bytes() == archive_bytes
+    assert "XML-документов в архивах — 2 (не разобрались как XML — 1)" in caplog.text

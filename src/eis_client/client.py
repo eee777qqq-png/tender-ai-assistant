@@ -7,6 +7,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import requests
@@ -63,10 +64,14 @@ class EISClient:
     - vsrz — не поддерживается этим методом (другой запрос, см. soap_request.py).
     """
 
-    def __init__(self, config: EISConfig, construction_classifier=None):
+    def __init__(self, config: EISConfig, construction_classifier=None, raw_archive_dir=None):
+        """`raw_archive_dir` — если задан, каждый скачанный архив сохраняется туда
+        как есть (`<дата>_<NN>.zip`) для ручного разбора структуры реальных
+        документов. По умолчанию архивы живут только в памяти."""
         self.config = config
         self._session = self._build_session()
         self._classifier = construction_classifier
+        self._raw_archive_dir = Path(raw_archive_dir) if raw_archive_dir else None
 
     def _build_session(self) -> requests.Session:
         session = requests.Session()
@@ -135,14 +140,28 @@ class EISClient:
         # эвристикой (см. `_find_okpd2_codes`). Лог разводит эти случаи.
         archive_urls = self.fetch_archive_urls(exact_date)
         xml_total = 0
+        xml_unparsed = 0
         with_any_okpd2 = 0
         sample_codes: list[str] = []
         logger.info("%s: архивов в ответе ЕИС — %d", exact_date, len(archive_urls))
 
-        for archive_url in archive_urls:
+        for index, archive_url in enumerate(archive_urls, start=1):
             archive_bytes = self.download_archive(archive_url)
+            if self._raw_archive_dir is not None:
+                self._raw_archive_dir.mkdir(parents=True, exist_ok=True)
+                raw_path = self._raw_archive_dir / f"{exact_date.isoformat()}_{index:02d}.zip"
+                raw_path.write_bytes(archive_bytes)
+                logger.info("Архив сохранён: %s", raw_path)
             for file_name, xml_bytes in self._extract_xml_files(archive_bytes):
                 xml_total += 1
+                try:
+                    ET.fromstring(xml_bytes)
+                except ET.ParseError:
+                    # `_find_okpd2_codes` в этом случае молча вернёт [] — без
+                    # отдельного счётчика неразобранный файл неотличим от
+                    # «ОКПД2 в документе нет».
+                    xml_unparsed += 1
+                    continue
                 codes = self._find_okpd2_codes(xml_bytes)
                 if codes:
                     with_any_okpd2 += 1
@@ -159,9 +178,10 @@ class EISClient:
                     )
 
         logger.info(
-            "%s: XML-документов в архивах — %d, из них с найденным ОКПД2 — %d, по стройке — %d; "
-            "примеры найденных кодов: %s",
-            exact_date, xml_total, with_any_okpd2, len(results), ", ".join(sample_codes) or "нет",
+            "%s: XML-документов в архивах — %d (не разобрались как XML — %d), с найденным ОКПД2 — %d, "
+            "по стройке — %d; примеры найденных кодов: %s",
+            exact_date, xml_total, xml_unparsed, with_any_okpd2, len(results),
+            ", ".join(sample_codes) or "нет",
         )
         return results
 

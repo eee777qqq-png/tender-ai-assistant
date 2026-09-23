@@ -10,3 +10,5 @@ certs/
 .pytest_cache/
 data/monitor.sqlite3
 data/regulatory_updates.sqlite3
+# Сырые архивы ЕИС для ручного разбора (fetch_purchases.py --save-raw) — не коммитить
+data/raw/
