@@ -247,3 +247,22 @@ def test_real_response_without_archives_returns_empty_list():
     with patch("requests.Session.post") as mock_post:
         mock_post.return_value = MagicMock(text=response_xml, raise_for_status=lambda: None)
         assert EISClient(make_ip_config()).fetch_archive_urls(date(2026, 9, 21)) == []
+
+
+def test_ip_archive_download_sends_token_header():
+    """Раздел 7 инструкции (скриншоты Postman): GET за архивом несёт individualPerson_token."""
+    url = "https://int.zakupki.gov.ru/dstore/common/download/compound?docRequestUid=a&compoundUid=b"
+    with patch("requests.Session.get") as mock_get:
+        mock_get.return_value = MagicMock(content=b"zip", raise_for_status=lambda: None)
+        assert EISClient(make_ip_config()).download_archive(url) == b"zip"
+
+    assert mock_get.call_args.args[0] == url
+    assert mock_get.call_args.kwargs["headers"] == {"individualPerson_token": "dummy-token"}
+
+
+def test_legal_entity_archive_download_has_no_token_header(tmp_path):
+    with patch("requests.Session.get") as mock_get:
+        mock_get.return_value = MagicMock(content=b"zip", raise_for_status=lambda: None)
+        EISClient(make_config(tmp_path)).download_archive("https://example.invalid/a.zip")
+
+    assert mock_get.call_args.kwargs["headers"] == {}

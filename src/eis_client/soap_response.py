@@ -28,7 +28,7 @@ def extract_archive_urls(response_xml: str) -> list[str]:
         raise EISRequestError(
             "ЕИС вернул эхо запроса вместо ответа (в теле — "
             f"{_local_name(body_elements[0].tag)}, а не ...Response). "
-            "Запрос сервисом не обработан — см. CLAUDE.md, «Известные пробелы», п.3"
+            "Запрос сервисом не обработан — см. CLAUDE.md, «Известные пробелы» → «Решено», эхо-ответ ЕИС"
         )
 
     urls = [el.text.strip() for el in root.iter() if _local_name(el.tag) == "archiveUrl" and el.text]

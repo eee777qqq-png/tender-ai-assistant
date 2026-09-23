@@ -95,11 +95,30 @@ class EISClient:
 
     def download_archive(self, archive_url: str) -> bytes:
         try:
-            response = self._session.get(archive_url, timeout=self.config.timeout)
+            response = self._session.get(
+                archive_url, headers=self._download_auth_headers(), timeout=self.config.timeout
+            )
             response.raise_for_status()
         except requests.RequestException as exc:
             raise EISRequestError(f"Не удалось скачать архив {archive_url}: {exc}") from exc
         return response.content
+
+    def _download_auth_headers(self) -> dict[str, str]:
+        """Аутентификация GET-запроса за архивом (раздел 7 инструкции).
+
+        Для физлица токен передаётся HTTP-заголовком с тем же именем, что и
+        поле в SOAP-заголовке, — `individualPerson_token`, не `Authorization`.
+        В тексте инструкции об этом нет ни слова; видно только на скриншотах
+        Postman в разделе 7 (стр. 37–39, вкладка Headers). Без него ЕИС
+        отвечал 403 на ссылку вида /dstore/common/download/compound?...
+        (2026-09-23) — что заголовок это исправляет, ещё не проверено вживую.
+
+        legal_entity аутентифицируется mTLS-сертификатом сессии, отдельный
+        заголовок не нужен.
+        """
+        if self.config.consumer_type == "individual_person":
+            return {"individualPerson_token": self.config.individual_person_token}
+        return {}
 
     def get_construction_documents(self, exact_date: date) -> list[ConstructionDocument]:
         """Забирает документы за дату, отбирает те, у которых ОКПД2 относится к строительству.
