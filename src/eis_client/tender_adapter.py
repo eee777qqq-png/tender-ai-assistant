@@ -47,6 +47,21 @@
 эту функцию не придётся переписывать с нуля — но само по себе улучшение
 парсинга контрактов `requires_sro`/`min_experience_years`/
 `submission_deadline` не даст, это не туда искать.
+
+**2026-09-23 — источник для реестра извещений нашёлся, гипотеза `PRIZ`
+подтверждена реальным запросом Edwin** (`EIS_SUBSYSTEM_TYPE=PRIZ` +
+`EIS_DOCUMENT_TYPE44=epNotificationEF2020`, см. CLAUDE.md → «Решено»).
+`notice_document_to_tender()` ниже строит `Tender` из XML ИЗВЕЩЕНИЯ
+(`eis_client.notice_parser`), а не из `ConstructionDocument` — извещение
+и контракт совсем разные документы, это не расширение
+`document_to_tender()`, а отдельная функция для отдельного источника.
+Она закрывает структурно все три поля, которых контракт в принципе не
+может дать (`requires_sro`, `min_experience_years`,
+`submission_deadline`), плюс `name`/`customer_name`/`max_price` — с той же
+оговоркой про 1:1, что и с полями контракта (`max_price` извещения — это
+НМЦК, что ближе к смыслу поля `Tender`, чем цена контракта). НЕ закрывает:
+`okpd2_code` (есть ли он в извещении — не проверено, не угадано),
+`region_code`, `publish_date` — по-прежнему явные обязательные параметры.
 """
 
 from __future__ import annotations
@@ -56,6 +71,7 @@ from datetime import date
 from classifier.tender import Tender
 
 from .client import ConstructionDocument
+from .notice_parser import extract_notice_fields
 
 # Поля Tender, которые ConstructionDocument сегодня в принципе не может
 # заполнить сама — см. докстринг модуля.
@@ -115,4 +131,69 @@ def document_to_tender(
         min_experience_years=min_experience_years,
         publish_date=publish_date,
         submission_deadline=submission_deadline,
+    )
+
+
+# Поля Tender, которые извещение сегодня в принципе не может заполнить —
+# см. докстринг модуля, абзац про notice_document_to_tender().
+NOTICE_FIELDS_NOT_YET_EXTRACTABLE = ("okpd2_code", "region_code", "publish_date")
+
+
+def notice_document_to_tender(
+    notice_xml: bytes,
+    *,
+    okpd2_code: str,
+    region_code: str,
+    publish_date: date,
+) -> Tender:
+    """Строит `Tender` из XML ИЗВЕЩЕНИЯ (`epNotification*`), не контракта —
+    см. докстринг модуля. В отличие от `document_to_tender()`, большую часть
+    полей извлекает сама (`eis_client.notice_parser.extract_notice_fields`):
+    `purchase_number`, `name`, `customer_name`, `max_price`,
+    `submission_deadline` — по пути тега; `requires_sro`/
+    `min_experience_years` — текстовым разбором `addRequirement/content` той
+    же логикой, что у Агента 3 (`document_analyst.extractor`).
+
+    Явно отказывает, если не нашёлся номер закупки (`purchase_number`) —
+    без него `Tender` не имеет смысла собирать, тот же принцип, что у
+    `document_to_tender()` с реестровым номером. `requires_sro=False`/
+    `min_experience_years=0`, если требования не упомянуты в тексте
+    `addRequirement/content` — это не отказ, а честный результат разбора:
+    отсутствие найденного упоминания, не подтверждённое отсутствие
+    требования (формулировка в конкретном документе может быть такой,
+    что регулярка Агента 3 её не поймает — см. `NoticeFields.requirement_texts`
+    для ручной проверки экспертом, если результат выглядит подозрительно)."""
+    fields = extract_notice_fields(notice_xml)
+
+    if fields.purchase_number is None:
+        raise ValueError(
+            "Номер закупки не найден в извещении (commonInfo/purchaseNumber) — "
+            "конвертация в Tender без него невозможна, см. Tender.purchase_number"
+        )
+    if fields.name is None:
+        raise ValueError(
+            "Наименование объекта закупки не найдено в извещении "
+            "(purchaseObjectsInfo/.../purchaseObject/name)"
+        )
+    if fields.customer_name is None:
+        raise ValueError(
+            "Наименование заказчика не найдено в извещении "
+            "(purchaseResponsibleInfo/responsibleOrgInfo/fullName)"
+        )
+    if fields.max_price is None:
+        raise ValueError("НМЦК не найдена или не разобралась как число (contractConditionsInfo/maxPriceInfo/maxPrice)")
+    if fields.submission_deadline is None:
+        raise ValueError("Срок подачи заявок не найден или не разобрался как дата (procedureInfo/collectingInfo/endDT)")
+
+    return Tender(
+        purchase_number=fields.purchase_number,
+        okpd2_code=okpd2_code,
+        name=fields.name,
+        customer_name=fields.customer_name,
+        region_code=region_code,
+        max_price=fields.max_price,
+        requires_sro=fields.requires_sro,
+        min_experience_years=fields.min_experience_years,
+        publish_date=publish_date,
+        submission_deadline=fields.submission_deadline,
     )

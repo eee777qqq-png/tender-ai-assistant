@@ -127,6 +127,24 @@ def _scan_hidden_risks(sentence: str) -> list[HiddenRisk]:
     return risks
 
 
+def mentions_sro_requirement(text: str) -> bool:
+    """Упоминает ли текст требование членства в СРО.
+
+    Публичная обёртка над `_SRO_RE` — для переиспользования этой же логики
+    вне Агента 3 (например, `eis_client.notice_parser`, извлечение
+    `requires_sro` из текста `addRequirement/content` реального извещения
+    ЕИС), вместо изобретения нового разбора того же смысла."""
+    return bool(_SRO_RE.search(text))
+
+
+def extract_min_experience_years(text: str) -> int | None:
+    """Минимальный требуемый опыт (лет), если текст его упоминает, иначе `None`.
+
+    Публичная обёртка над `_EXPERIENCE_RE` — см. `mentions_sro_requirement`."""
+    m = _EXPERIENCE_RE.search(text)
+    return int(m.group(1)) if m else None
+
+
 def extract_requirements(tender_purchase_number: str, document_text: str) -> ExtractedRequirements:
     timeline = SubmissionTimeline()
     security_requirements: list[SecurityRequirement] = []
