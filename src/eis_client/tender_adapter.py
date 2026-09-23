@@ -59,9 +59,21 @@
 может дать (`requires_sro`, `min_experience_years`,
 `submission_deadline`), плюс `name`/`customer_name`/`max_price` — с той же
 оговоркой про 1:1, что и с полями контракта (`max_price` извещения — это
-НМЦК, что ближе к смыслу поля `Tender`, чем цена контракта). НЕ закрывает:
-`okpd2_code` (есть ли он в извещении — не проверено, не угадано),
-`region_code`, `publish_date` — по-прежнему явные обязательные параметры.
+НМЦК, что ближе к смыслу поля `Tender`, чем цена контракта).
+
+**2026-09-23, позже в тот же день — закрывает и `okpd2_code`.** Edwin
+нашёл путь и в извещении: `purchaseObject/OKPD2/OKPDCode` (без обёртки
+`KTRU`, последний тег `OKPDCode`, не `code` — другой путь, чем у контракта,
+см. `client._OKPD2_PATH_SUFFIXES`). `notice_document_to_tender()` берёт
+код тем же вызовом, что и классификатор Агента 1
+(`EISClient._find_okpd2_codes()`), не отдельной новой эвристикой —
+`okpd2_code` для `notice_document_to_tender()` больше не параметр вызова.
+
+**НЕ закрывает:** `region_code`, `publish_date` — по-прежнему явные
+обязательные параметры. Оба поля НЕ найдены Edwin в структуре, которую он
+присылал, — предполагаемые пути (например, `publishDTInEIS` для даты
+публикации) НЕ подтверждены на реальном документе, поэтому не угаданы и не
+добавлены в код; см. CLAUDE.md, «Известные пробелы».
 """
 
 from __future__ import annotations
@@ -142,7 +154,6 @@ NOTICE_FIELDS_NOT_YET_EXTRACTABLE = ("okpd2_code", "region_code", "publish_date"
 def notice_document_to_tender(
     notice_xml: bytes,
     *,
-    okpd2_code: str,
     region_code: str,
     publish_date: date,
 ) -> Tender:
@@ -150,25 +161,33 @@ def notice_document_to_tender(
     см. докстринг модуля. В отличие от `document_to_tender()`, большую часть
     полей извлекает сама (`eis_client.notice_parser.extract_notice_fields`):
     `purchase_number`, `name`, `customer_name`, `max_price`,
-    `submission_deadline` — по пути тега; `requires_sro`/
-    `min_experience_years` — текстовым разбором `addRequirement/content` той
-    же логикой, что у Агента 3 (`document_analyst.extractor`).
+    `submission_deadline`, `okpd2_code` — по пути тега (`okpd2_code` тем же
+    вызовом, что и классификатор Агента 1, `EISClient._find_okpd2_codes()`);
+    `requires_sro`/`min_experience_years` — текстовым разбором
+    `addRequirement/content` той же логикой, что у Агента 3
+    (`document_analyst.extractor`).
 
-    Явно отказывает, если не нашёлся номер закупки (`purchase_number`) —
-    без него `Tender` не имеет смысла собирать, тот же принцип, что у
-    `document_to_tender()` с реестровым номером. `requires_sro=False`/
-    `min_experience_years=0`, если требования не упомянуты в тексте
-    `addRequirement/content` — это не отказ, а честный результат разбора:
-    отсутствие найденного упоминания, не подтверждённое отсутствие
-    требования (формулировка в конкретном документе может быть такой,
-    что регулярка Агента 3 её не поймает — см. `NoticeFields.requirement_texts`
-    для ручной проверки экспертом, если результат выглядит подозрительно)."""
+    Явно отказывает, если не нашёлся номер закупки (`purchase_number`) или
+    ОКПД2-код — без них `Tender` не имеет смысла собирать, тот же принцип,
+    что у `document_to_tender()` с реестровым номером/ОКПД2 контракта.
+    `requires_sro=False`/`min_experience_years=0`, если требования не
+    упомянуты в тексте `addRequirement/content` — это не отказ, а честный
+    результат разбора: отсутствие найденного упоминания, не подтверждённое
+    отсутствие требования (формулировка в конкретном документе может быть
+    такой, что регулярка Агента 3 её не поймает — см.
+    `NoticeFields.requirement_texts` для ручной проверки экспертом, если
+    результат выглядит подозрительно)."""
     fields = extract_notice_fields(notice_xml)
 
     if fields.purchase_number is None:
         raise ValueError(
             "Номер закупки не найден в извещении (commonInfo/purchaseNumber) — "
             "конвертация в Tender без него невозможна, см. Tender.purchase_number"
+        )
+    if not fields.okpd2_codes:
+        raise ValueError(
+            "ОКПД2-код не найден в извещении (purchaseObject/OKPD2/OKPDCode) — "
+            "такое извещение не должно было пройти фильтр Агента 1 (ConstructionClassifier) вообще"
         )
     if fields.name is None:
         raise ValueError(
@@ -187,7 +206,7 @@ def notice_document_to_tender(
 
     return Tender(
         purchase_number=fields.purchase_number,
-        okpd2_code=okpd2_code,
+        okpd2_code=fields.okpd2_codes[0],
         name=fields.name,
         customer_name=fields.customer_name,
         region_code=region_code,

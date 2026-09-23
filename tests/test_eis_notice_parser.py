@@ -1,8 +1,8 @@
 """Тесты извлечения полей Tender из ИЗВЕЩЕНИЯ ЕИС (не контракта).
 
 Фрагмент структуры ниже воспроизводит реальную (подтверждённую Edwin,
-2026-09-23, на документе `0373200298826000007`) — не выдуманную с нуля,
-но и не сырой реальный документ (его в этой сессии нет, см. CLAUDE.md).
+2026-09-23, на документе `0373200298826000007`/файле №37) — не выдуманную
+с нуля, но и не сырой реальный документ (его в этой сессии нет, см. CLAUDE.md).
 """
 
 import sys
@@ -16,6 +16,7 @@ from eis_client.tender_adapter import notice_document_to_tender
 
 # Тот же скелет путей, что прислал Edwin: commonInfo/purchaseNumber,
 # purchaseObjectsInfo/notDrugPurchaseObjectsInfo/purchaseObject/name,
+# purchaseObjectsInfo/notDrugPurchaseObjectsInfo/purchaseObject/OKPD2/OKPDCode,
 # purchaseResponsibleInfo/responsibleOrgInfo/fullName,
 # notificationInfo/contractConditionsInfo/maxPriceInfo/maxPrice,
 # notificationInfo/procedureInfo/collectingInfo/endDT,
@@ -29,6 +30,7 @@ REAL_STRUCTURE_NOTICE_XML = """<export>
       <notDrugPurchaseObjectsInfo>
         <purchaseObject>
           <name>Капитальный ремонт кровли школы №5</name>
+          <OKPD2><OKPDCode>41.20.40.900</OKPDCode></OKPD2>
         </purchaseObject>
       </notDrugPurchaseObjectsInfo>
     </purchaseObjectsInfo>
@@ -72,6 +74,7 @@ def test_extract_notice_fields_real_structure():
     assert fields.submission_deadline == date(2026, 10, 5)
     assert fields.requires_sro is True
     assert fields.min_experience_years == 3
+    assert fields.okpd2_codes == ["41.20.40.900"]
     assert len(fields.requirement_texts) == 1
 
 
@@ -85,6 +88,7 @@ def test_extract_notice_fields_no_requirement_text_gives_honest_defaults():
     assert fields.requires_sro is False
     assert fields.min_experience_years == 0
     assert fields.name is None
+    assert fields.okpd2_codes == []
     assert fields.requirement_texts == []
 
 
@@ -93,9 +97,10 @@ def test_extract_notice_fields_unparsable_xml_returns_empty():
 
 
 def test_notice_document_to_tender_builds_tender():
+    """okpd2_code больше не параметр вызова — извлекается сама, тем же
+    путём, что классификатор Агента 1 (`purchaseObject/OKPD2/OKPDCode`)."""
     tender = notice_document_to_tender(
         REAL_STRUCTURE_NOTICE_XML,
-        okpd2_code="41.20.40.900",
         region_code="77",
         publish_date=date(2026, 9, 21),
     )
@@ -115,10 +120,23 @@ def test_notice_document_to_tender_builds_tender():
 def test_notice_document_to_tender_rejects_missing_purchase_number():
     xml = b"<export><notification><commonInfo/></notification></export>"
     try:
-        notice_document_to_tender(xml, okpd2_code="41.20.40.900", region_code="77", publish_date=date(2026, 9, 21))
+        notice_document_to_tender(xml, region_code="77", publish_date=date(2026, 9, 21))
         assert False, "ожидался ValueError"
     except ValueError as exc:
         assert "Номер закупки" in str(exc)
+
+
+def test_notice_document_to_tender_rejects_missing_okpd2():
+    """Номер закупки есть, ОКПД2 — нет: такое извещение не должно было
+    пройти фильтр Агента 1 (ConstructionClassifier) вообще."""
+    xml = b"""<export><notification>
+      <commonInfo><purchaseNumber>0373200298826000010</purchaseNumber></commonInfo>
+    </notification></export>"""
+    try:
+        notice_document_to_tender(xml, region_code="77", publish_date=date(2026, 9, 21))
+        assert False, "ожидался ValueError"
+    except ValueError as exc:
+        assert "ОКПД2" in str(exc)
 
 
 def test_notice_document_to_tender_rejects_missing_max_price():
@@ -126,11 +144,12 @@ def test_notice_document_to_tender_rejects_missing_max_price():
       <commonInfo><purchaseNumber>0373200298826000009</purchaseNumber></commonInfo>
       <purchaseObjectsInfo><notDrugPurchaseObjectsInfo><purchaseObject>
         <name>Тест</name>
+        <OKPD2><OKPDCode>41.20.40.900</OKPDCode></OKPD2>
       </purchaseObject></notDrugPurchaseObjectsInfo></purchaseObjectsInfo>
       <purchaseResponsibleInfo><responsibleOrgInfo><fullName>Заказчик</fullName></responsibleOrgInfo></purchaseResponsibleInfo>
     </notification></export>""".encode("utf-8")
     try:
-        notice_document_to_tender(xml, okpd2_code="41.20.40.900", region_code="77", publish_date=date(2026, 9, 21))
+        notice_document_to_tender(xml, region_code="77", publish_date=date(2026, 9, 21))
         assert False, "ожидался ValueError"
     except ValueError as exc:
         assert "НМЦК" in str(exc)

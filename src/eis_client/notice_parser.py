@@ -26,8 +26,10 @@ from xml.etree import ElementTree as ET
 
 from document_analyst.extractor import extract_min_experience_years, mentions_sro_requirement
 
+from .client import EISClient
+
 # Суффиксы путей — последние звенья, без учёта регистра/namespace, тот же
-# приём, что у `client._OKPD2_PATH_SUFFIX`/`_REESTR_NUMBER_PATH_SUFFIX`.
+# приём, что у `client._OKPD2_PATH_SUFFIXES`/`_REESTR_NUMBER_PATH_SUFFIXES`.
 _PURCHASE_NUMBER_PATH_SUFFIX = ("commoninfo", "purchasenumber")
 _NAME_PATH_SUFFIX = ("purchaseobjectsinfo", "notdrugpurchaseobjectsinfo", "purchaseobject", "name")
 _CUSTOMER_NAME_PATH_SUFFIX = ("purchaseresponsibleinfo", "responsibleorginfo", "fullname")
@@ -55,10 +57,11 @@ _REQUIREMENT_TEXT_PATH_SUFFIX = (
 @dataclass
 class NoticeFields:
     """Поля `Tender`, извлечённые из реального извещения — то, что удалось
-    найти структурно/текстом, честно `None`/дефолт, если не нашлось.
+    найти структурно/текстом, честно `None`/дефолт/пустой список, если не
+    нашлось.
 
     НЕ входят (не подтверждены на этом документе, не угадываются):
-    `okpd2_code`, `region_code`, `publish_date` — см. `tender_adapter.py`."""
+    `region_code`, `publish_date` — см. `tender_adapter.py`."""
 
     purchase_number: str | None = None
     name: str | None = None
@@ -67,6 +70,10 @@ class NoticeFields:
     submission_deadline: date | None = None
     requires_sro: bool = False
     min_experience_years: int = 0
+    # okpd2_codes — тем же кодом, что и классификатор Агента 1
+    # (`EISClient._find_okpd2_codes`, подтверждён 2026-09-23 и на извещении:
+    # путь purchaseObject/OKPD2/OKPDCode), не отдельной новой эвристикой.
+    okpd2_codes: list[str] = field(default_factory=list)
     # Тексты доп. требований, из которых искали СРО/опыт — для прозрачности
     # перед экспертом (мог быть текст, а `mentions_sro_requirement`/
     # `extract_min_experience_years` его не распознали — другая формулировка).
@@ -144,5 +151,6 @@ def extract_notice_fields(xml_bytes: bytes) -> NoticeFields:
         min_experience_years=max(
             (extract_min_experience_years(text) or 0 for text in requirement_texts), default=0
         ),
+        okpd2_codes=EISClient._find_okpd2_codes(xml_bytes),
         requirement_texts=requirement_texts,
     )
