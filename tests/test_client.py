@@ -322,3 +322,40 @@ def test_find_okpd2_codes_deduplicates_repeated_values():
       <product><KTRU><OKPD2><code>41.20.40.000</code></OKPD2></KTRU></product>
     </products></export>"""
     assert EISClient._find_okpd2_codes(xml) == ["41.20.40.000"]
+
+
+def test_find_reestr_number_matches_real_notification_number_path():
+    """Реальная структура документа ЕИС (Edwin, 2026-09-23, контракт
+    contract_2770206615726000446, стройка ОКПД2 41.20.40.900): номер извещения,
+    на основании которого заключён контракт, лежит по пути
+    export/contract/foundation/fcsOrder/order/notificationNumber (19 цифр)."""
+    xml = b"""<export>
+      <contract>
+        <foundation>
+          <fcsOrder>
+            <order>
+              <notificationNumber>2770206615726000446</notificationNumber>
+            </order>
+          </fcsOrder>
+        </foundation>
+      </contract>
+    </export>"""
+    assert EISClient._find_reestr_number(xml) == "2770206615726000446"
+
+
+def test_find_reestr_number_ignores_unrelated_reg_num():
+    """regNum — регистрационный номер ОРГАНИЗАЦИИ, не реестровый номер закупки."""
+    xml = b"<Document><regNum>1234567890123</regNum></Document>"
+    assert EISClient._find_reestr_number(xml) is None
+
+
+def test_find_reestr_number_falls_back_to_tag_name_when_no_notification_path():
+    """Резервный способ (не подтверждён на реальных документах) — для документов
+    без структуры foundation/fcsOrder/order/notificationNumber, если встретятся."""
+    xml = b"<Document><reestrNumber>0138300005125000006</reestrNumber></Document>"
+    assert EISClient._find_reestr_number(xml) == "0138300005125000006"
+
+
+def test_find_reestr_number_none_when_absent():
+    xml = b"<Document><foo>bar</foo></Document>"
+    assert EISClient._find_reestr_number(xml) is None

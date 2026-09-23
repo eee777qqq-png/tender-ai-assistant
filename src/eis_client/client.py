@@ -34,13 +34,18 @@ _OKPD2_PATH_SUFFIX = ("ktru", "okpd2", "code")
 _OKPD2_TAG_RE = re.compile(r"okpd", re.IGNORECASE)
 _OKPD2_CODE_RE = re.compile(r"^\d{2}(\.\d{1,3}){0,3}$")
 
-# Реестровый номер закупки — та же эвристика (поиск по имени тега), что и
-# для ОКПД2 выше, и с тем же ограничением: точная XSD-схема содержимого
-# документов не входит в общедоступную инструкцию (см. докстринг
-# `_find_okpd2_codes`), поэтому это не подтверждённое на реальных
-# документах поле, а обоснованная попытка (см. `tender_adapter.py`).
-# Специально НЕ ловит `regNum` — по примеру в самой инструкции это номер
+# Реестровый номер закупки — подтверждён на реальном документе, 2026-09-23
+# (контракт `contract_2770206615726000446`, стройка, ОКПД2 41.20.40.900):
+# путь .../foundation/fcsOrder/order/notificationNumber (19 цифр) — это
+# реестровый номер ИЗВЕЩЕНИЯ, на основании которого заключён контракт, не
+# номер самого контракта. Основной способ теперь — та же логика, что у
+# ОКПД2 (см. `_OKPD2_PATH_SUFFIX` выше): совпадение по последним 4 звеньям
+# пути тега. Старая эвристика по имени тега (`reestrnum`) оставлена
+# резервным способом — не подтверждена на реальных документах, но
+# пригодится, если формат окажется другим у извещений (не контрактов).
+# Специально НЕ ловит `regNum` — по примеру в инструкции это номер
 # регистрации ОРГАНИЗАЦИИ, а не реестровый номер ЗАКУПКИ, это разные вещи.
+_REESTR_NUMBER_PATH_SUFFIX = ("foundation", "fcsorder", "order", "notificationnumber")
 _REESTR_NUMBER_TAG_RE = re.compile(r"reestrnum", re.IGNORECASE)
 _REESTR_NUMBER_VALUE_RE = re.compile(r"^\d{15,25}$")
 
@@ -49,10 +54,9 @@ _REESTR_NUMBER_VALUE_RE = re.compile(r"^\d{15,25}$")
 class ConstructionDocument:
     """Документ из архива ЕИС, в котором нашёлся ОКПД2-код раздела «Строительство».
 
-    `reestr_number` — тоже эвристика (см. `_find_reestr_number`), не
-    подтверждённая на реальных документах ЕИС (сервис пока не отдаёт
-    реальные данные, см. CLAUDE.md, «Известные пробелы», п.3) — `None`,
-    если не нашёлся."""
+    `reestr_number` — путь подтверждён на реальном документе (см. `_find_reestr_number`,
+    2026-09-23) — это номер ИЗВЕЩЕНИЯ, на основании которого заключён контракт,
+    а не номер самого контракта. `None`, если не нашёлся."""
 
     archive_url: str
     file_name: str
@@ -259,22 +263,49 @@ class EISClient:
 
     @staticmethod
     def _find_reestr_number(xml_bytes: bytes) -> str | None:
-        """Эвристический поиск реестрового номера закупки — см. докстринг
-        `_REESTR_NUMBER_TAG_RE`. Возвращает первое найденное значение или
-        `None`, честно, а не выдуманный номер."""
+        """Поиск реестрового номера закупки — по реальной структуре, не по имени тега.
+
+        Основной способ (подтверждён на реальном документе ЕИС, 2026-09-23 —
+        см. `_REESTR_NUMBER_PATH_SUFFIX`): путь тега оканчивается на
+        .../foundation/fcsOrder/order/notificationNumber. Резервный способ —
+        прежняя эвристика по имени тега (`reestrnum`), не подтверждена на
+        реальных документах.
+
+        Возвращает первое найденное значение или `None`, честно, а не
+        выдуманный номер."""
         try:
             root = ET.fromstring(xml_bytes)
         except ET.ParseError:
             return None
 
-        for el in root.iter():
-            tag = el.tag.split("}", 1)[-1] if "}" in el.tag else el.tag
-            if not _REESTR_NUMBER_TAG_RE.search(tag):
-                continue
-            for value in (el.text, *el.attrib.values()):
-                if value and _REESTR_NUMBER_VALUE_RE.match(value.strip()):
-                    return value.strip()
-        return None
+        result: list[str | None] = [None]
+        EISClient._walk_for_reestr_number(root, (), result)
+        return result[0]
+
+    @staticmethod
+    def _walk_for_reestr_number(el: ET.Element, path: tuple[str, ...], result: list[str | None]) -> None:
+        if result[0] is not None:
+            return
+
+        tag = el.tag.split("}", 1)[-1] if "}" in el.tag else el.tag
+        path = path + (tag.lower(),)
+
+        if path[-4:] == _REESTR_NUMBER_PATH_SUFFIX:
+            value = (el.text or "").strip()
+            if value and _REESTR_NUMBER_VALUE_RE.match(value):
+                result[0] = value
+                return
+        elif _REESTR_NUMBER_TAG_RE.search(tag):
+            for raw in (el.text, *el.attrib.values()):
+                value = raw.strip() if raw else ""
+                if value and _REESTR_NUMBER_VALUE_RE.match(value):
+                    result[0] = value
+                    return
+
+        for child in el:
+            EISClient._walk_for_reestr_number(child, path, result)
+            if result[0] is not None:
+                return
 
     def close(self) -> None:
         self._session.close()
