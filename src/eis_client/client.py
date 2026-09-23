@@ -129,10 +129,24 @@ class EISClient:
         classifier = self._require_classifier()
         results: list[ConstructionDocument] = []
 
-        for archive_url in self.fetch_archive_urls(exact_date):
+        # Счётчики для диагностики: «0 документов по стройке» может значить
+        # три разные вещи — архивов не пришло вовсе / документы есть, но не
+        # по стройке / ОКПД2 в реальных документах не находится нашей
+        # эвристикой (см. `_find_okpd2_codes`). Лог разводит эти случаи.
+        archive_urls = self.fetch_archive_urls(exact_date)
+        xml_total = 0
+        with_any_okpd2 = 0
+        sample_codes: list[str] = []
+        logger.info("%s: архивов в ответе ЕИС — %d", exact_date, len(archive_urls))
+
+        for archive_url in archive_urls:
             archive_bytes = self.download_archive(archive_url)
             for file_name, xml_bytes in self._extract_xml_files(archive_bytes):
+                xml_total += 1
                 codes = self._find_okpd2_codes(xml_bytes)
+                if codes:
+                    with_any_okpd2 += 1
+                    sample_codes.extend(c for c in codes if c not in sample_codes and len(sample_codes) < 10)
                 construction_codes = [c for c in codes if classifier.is_construction_code(c)]
                 if construction_codes:
                     results.append(
@@ -143,6 +157,12 @@ class EISClient:
                             reestr_number=self._find_reestr_number(xml_bytes),
                         )
                     )
+
+        logger.info(
+            "%s: XML-документов в архивах — %d, из них с найденным ОКПД2 — %d, по стройке — %d; "
+            "примеры найденных кодов: %s",
+            exact_date, xml_total, with_any_okpd2, len(results), ", ".join(sample_codes) or "нет",
+        )
         return results
 
     def _require_classifier(self):
