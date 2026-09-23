@@ -8,11 +8,16 @@
 это не личные данные.
 
 Использование:
-    python src/inspect_eis_xml.py data/raw/2026-09-21_01.zip
+    python src/inspect_eis_xml.py data/raw/2026-09-21_01.zip --list
     python src/inspect_eis_xml.py data/raw/2026-09-21_01.zip --file 3
     python src/inspect_eis_xml.py документ.xml --show code
 
---file N   — какой по счёту XML внутри архива разобрать (по умолчанию первый).
+--list       — не разбирать ничего, а показать номер, имя файла и найденные
+             ОКПД2-коды для каждого XML в архиве (та же логика, что в
+             `EISClient._find_okpd2_codes`) — чтобы найти номер нужного
+             документа, не подбирая --file вслепую по одному.
+--file N   — какой по счёту XML внутри архива разобрать, число (по умолчанию 1;
+             посмотрите номер через --list).
 --show СЛОВО — дополнительно показать значения тегов, в имени которых есть
              это слово (без учёта регистра). Используйте только для тегов
              с кодами, не для названий/ИНН/адресов.
@@ -27,6 +32,9 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from eis_client.client import EISClient  # noqa: E402  (нужен путь до src/ выше)
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -79,22 +87,37 @@ def describe(xml_bytes: bytes, show: str | None = None) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("path", type=Path, help="Архив .zip из --save-raw или отдельный .xml")
-    parser.add_argument("--file", type=int, default=1, help="Номер XML внутри архива (с 1)")
+    parser.add_argument("--list", action="store_true", help="Список файлов архива с найденными ОКПД2-кодами, без разбора структуры")
+    parser.add_argument("--file", type=int, default=1, help="Номер XML внутри архива, число (с 1) — посмотрите через --list")
     parser.add_argument("--show", default=None, help="Показать значения тегов, в имени которых есть это слово")
     args = parser.parse_args()
 
-    if args.path.suffix.lower() == ".zip":
+    if args.path.suffix.lower() != ".zip":
+        if args.list:
+            print("--list работает только для .zip-архивов, у отдельного XML-файла нечего перечислять.")
+            return 1
+        xml_bytes = args.path.read_bytes()
+    else:
         with zipfile.ZipFile(args.path) as zf:
             names = [n for n in zf.namelist() if n.lower().endswith(".xml")]
             print(f"В архиве XML-файлов: {len(names)}")
             if not names:
                 print("Все файлы архива:", ", ".join(zf.namelist()[:20]))
                 return 1
+
+            if args.list:
+                for i, name in enumerate(names, start=1):
+                    try:
+                        codes = EISClient._find_okpd2_codes(zf.read(name))
+                    except ET.ParseError:
+                        codes = ["<не разобрался как XML>"]
+                    print(f"{i:>3}. {name}  ОКПД2: {', '.join(codes) or '—'}")
+                print("\nЗапустите повторно с --file <номер> для нужного документа.")
+                return 0
+
             name = names[min(max(args.file, 1), len(names)) - 1]
             xml_bytes = zf.read(name)
         print(f"Разбираю файл №{args.file}: {name}\n")
-    else:
-        xml_bytes = args.path.read_bytes()
 
     try:
         lines = describe(xml_bytes, args.show)
