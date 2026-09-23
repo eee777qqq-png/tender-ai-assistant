@@ -359,3 +359,10 @@ def test_find_reestr_number_falls_back_to_tag_name_when_no_notification_path():
 def test_find_reestr_number_none_when_absent():
     xml = b"<Document><foo>bar</foo></Document>"
     assert EISClient._find_reestr_number(xml) is None
+
+
+def test_find_reestr_number_matches_notice_common_info_path():
+    """Извещение (не контракт) — собственный номер по пути commonInfo/purchaseNumber
+    (подтверждён Edwin на реальном извещении 0373200298826000007, 2026-09-23)."""
+    xml = b"<export><notification><commonInfo><purchaseNumber>0373200298826000007</purchaseNumber></commonInfo></notification></export>"
+    assert EISClient._find_reestr_number(xml) == "0373200298826000007"

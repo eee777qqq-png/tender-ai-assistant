@@ -77,8 +77,15 @@ class EISConfig:
         config = cls(
             consumer_type=os.getenv("EIS_CONSUMER_TYPE", "legal_entity"),
             org_region=os.getenv("EIS_ORG_REGION", "77"),
-            subsystem_type=os.getenv("EIS_SUBSYSTEM_TYPE", "RGK"),
-            document_type44=os.getenv("EIS_DOCUMENT_TYPE44", "contract"),
+            # По умолчанию — реестр ИЗВЕЩЕНИЙ (PRIZ/epNotificationEF2020), не
+            # контрактов: продуктовое решение 2026-09-23 — закупки, в которых
+            # клиент может участвовать, это предстоящие извещения, а не архив
+            # уже заключённых сделок. Код подтверждён реальным запросом
+            # (см. CLAUDE.md, «Известные пробелы» → «Решено»), но не из
+            # закрытого Альбома ТФФ — если ЕИС когда-нибудь его отвергнет,
+            # `soap_response.py` вернёт явный SOAP-фолт, не молчаливый ноль.
+            subsystem_type=os.getenv("EIS_SUBSYSTEM_TYPE", "PRIZ"),
+            document_type44=os.getenv("EIS_DOCUMENT_TYPE44", "epNotificationEF2020"),
             client_cert=os.getenv("EIS_CLIENT_CERT", ""),
             client_key=os.getenv("EIS_CLIENT_KEY", ""),
             individual_person_token=os.getenv("EIS_INDIVIDUAL_PERSON_TOKEN", ""),

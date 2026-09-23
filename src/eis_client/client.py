@@ -34,18 +34,25 @@ _OKPD2_PATH_SUFFIX = ("ktru", "okpd2", "code")
 _OKPD2_TAG_RE = re.compile(r"okpd", re.IGNORECASE)
 _OKPD2_CODE_RE = re.compile(r"^\d{2}(\.\d{1,3}){0,3}$")
 
-# Реестровый номер закупки — подтверждён на реальном документе, 2026-09-23
-# (контракт `contract_2770206615726000446`, стройка, ОКПД2 41.20.40.900):
-# путь .../foundation/fcsOrder/order/notificationNumber (19 цифр) — это
-# реестровый номер ИЗВЕЩЕНИЯ, на основании которого заключён контракт, не
-# номер самого контракта. Основной способ теперь — та же логика, что у
-# ОКПД2 (см. `_OKPD2_PATH_SUFFIX` выше): совпадение по последним 4 звеньям
-# пути тега. Старая эвристика по имени тега (`reestrnum`) оставлена
-# резервным способом — не подтверждена на реальных документах, но
-# пригодится, если формат окажется другим у извещений (не контрактов).
+# Реестровый номер закупки — два подтверждённых на реальных документах пути,
+# для двух разных типов документа, которые эта функция может получить (в
+# зависимости от EIS_DOCUMENT_TYPE44):
+# - контракт (`contract_2770206615726000446`, 2026-09-23): путь
+#   .../foundation/fcsOrder/order/notificationNumber (19 цифр) — это номер
+#   ИЗВЕЩЕНИЯ, на основании которого заключён контракт, не номер контракта;
+# - извещение (`0373200298826000007`, 2026-09-23, реестр PRIZ — с 2026-09-23
+#   основной источник, см. CLAUDE.md → «Решено»): путь
+#   .../commonInfo/purchaseNumber — собственный номер извещения.
+# Оба пути пробуются по очереди (первое совпадение побеждает) — не гадание,
+# у каждого пути отдельное реальное подтверждение, просто для разных типов
+# документа. Старая эвристика по имени тега (`reestrnum`) оставлена
+# резервным способом — не подтверждена на реальных документах.
 # Специально НЕ ловит `regNum` — по примеру в инструкции это номер
 # регистрации ОРГАНИЗАЦИИ, а не реестровый номер ЗАКУПКИ, это разные вещи.
-_REESTR_NUMBER_PATH_SUFFIX = ("foundation", "fcsorder", "order", "notificationnumber")
+_REESTR_NUMBER_PATH_SUFFIXES = (
+    ("foundation", "fcsorder", "order", "notificationnumber"),  # контракт
+    ("commoninfo", "purchasenumber"),  # извещение
+)
 _REESTR_NUMBER_TAG_RE = re.compile(r"reestrnum", re.IGNORECASE)
 _REESTR_NUMBER_VALUE_RE = re.compile(r"^\d{15,25}$")
 
@@ -265,11 +272,12 @@ class EISClient:
     def _find_reestr_number(xml_bytes: bytes) -> str | None:
         """Поиск реестрового номера закупки — по реальной структуре, не по имени тега.
 
-        Основной способ (подтверждён на реальном документе ЕИС, 2026-09-23 —
-        см. `_REESTR_NUMBER_PATH_SUFFIX`): путь тега оканчивается на
-        .../foundation/fcsOrder/order/notificationNumber. Резервный способ —
-        прежняя эвристика по имени тега (`reestrnum`), не подтверждена на
-        реальных документах.
+        Основной способ (оба пути подтверждены на реальных документах ЕИС,
+        2026-09-23 — см. `_REESTR_NUMBER_PATH_SUFFIXES`): путь тега
+        оканчивается на .../foundation/fcsOrder/order/notificationNumber
+        (контракт) или .../commonInfo/purchaseNumber (извещение). Резервный
+        способ — прежняя эвристика по имени тега (`reestrnum`), не
+        подтверждена на реальных документах.
 
         Возвращает первое найденное значение или `None`, честно, а не
         выдуманный номер."""
@@ -290,7 +298,7 @@ class EISClient:
         tag = el.tag.split("}", 1)[-1] if "}" in el.tag else el.tag
         path = path + (tag.lower(),)
 
-        if path[-4:] == _REESTR_NUMBER_PATH_SUFFIX:
+        if any(path[-len(suffix) :] == suffix for suffix in _REESTR_NUMBER_PATH_SUFFIXES):
             value = (el.text or "").strip()
             if value and _REESTR_NUMBER_VALUE_RE.match(value):
                 result[0] = value
