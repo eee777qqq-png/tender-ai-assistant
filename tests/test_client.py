@@ -366,3 +366,34 @@ def test_find_reestr_number_matches_notice_common_info_path():
     (подтверждён Edwin на реальном извещении 0373200298826000007, 2026-09-23)."""
     xml = b"<export><notification><commonInfo><purchaseNumber>0373200298826000007</purchaseNumber></commonInfo></notification></export>"
     assert EISClient._find_reestr_number(xml) == "0373200298826000007"
+
+
+def test_find_okpd2_codes_matches_notice_purchase_object_path():
+    """Реальная структура извещения (Edwin, 2026-09-23, epNotificationEF2020,
+    файл №37): код лежит по пути .../purchaseObject/OKPD2/OKPDCode — БЕЗ
+    обёртки KTRU (в отличие от контракта), и тег называется OKPDCode, не code."""
+    xml = b"""<export>
+      <notification>
+        <purchaseObjectsInfo>
+          <notDrugPurchaseObjectsInfo>
+            <purchaseObject>
+              <OKPD2><OKPDCode>41.20.40.900</OKPDCode></OKPD2>
+            </purchaseObject>
+          </notDrugPurchaseObjectsInfo>
+        </purchaseObjectsInfo>
+      </notification>
+    </export>"""
+    assert EISClient._find_okpd2_codes(xml) == ["41.20.40.900"]
+
+
+def test_find_okpd2_codes_matches_both_contract_and_notice_paths_in_one_document():
+    """Оба пути проверяются независимо — если бы в одном документе почему-то
+    встретились оба (не реальный случай, но проверяет, что один путь не
+    маскирует другой), находятся оба кода."""
+    xml = b"""<export>
+      <contract><products><product><KTRU><OKPD2><code>41.20.40.110</code></OKPD2></KTRU></product></products></contract>
+      <notification><purchaseObjectsInfo><notDrugPurchaseObjectsInfo><purchaseObject>
+        <OKPD2><OKPDCode>43.29.19.190</OKPDCode></OKPD2>
+      </purchaseObject></notDrugPurchaseObjectsInfo></purchaseObjectsInfo></notification>
+    </export>"""
+    assert EISClient._find_okpd2_codes(xml) == ["41.20.40.110", "43.29.19.190"]
