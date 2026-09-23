@@ -5,16 +5,37 @@ from dataclasses import dataclass, field
 
 from .exceptions import EISConfigError
 
-# Подтверждено официальной инструкцией ЕИС «Инструкция по использованию
-# сервисов отдачи информации ЕИС для юридических, физических лиц и ВСРЗ»
-# (Москва, 2025), см. docs/eis-integration-instruction-2025.pdf.
-ENDPOINTS = {
+# Два РАЗНЫХ значения, которые легко перепутать (и которые уже один раз
+# перепутали — см. CLAUDE.md, «Известные пробелы», п.3):
+#
+# 1. ENDPOINT_URLS — «куда стучимся»: физический адрес, на который уходит
+#    HTTP POST. Подтверждён официальной инструкцией ЕИС «Инструкция по
+#    использованию сервисов отдачи информации ЕИС для юридических, физических
+#    лиц и ВСРЗ» (Москва, 2025), см. docs/eis-integration-instruction-2025.pdf.
+#
+# 2. ENVELOPE_NAMESPACES — «что написано в конверте»: значение xmlns:ws внутри
+#    SOAP-XML (soap_request.py). Это идентификатор схемы, а не адрес — по нему
+#    никто никуда не подключается. В примерах инструкции он совпадал с
+#    физическим URL, и до 2026-09-23 код так и делал; сервис при этом отвечал
+#    эхом запроса вместо ответа.
+ENDPOINT_URLS = {
     "legal_entity": "https://int44-ttls-cert.zakupki.gov.ru/eis-integration/services/getDocsLE",
     "individual_person": "https://int.zakupki.gov.ru/eis-integration/services/getDocsIP",
     "vsrz": "https://int.zakupki.gov.ru/eis-integration/services/getDocsOrganization",
 }
 
-CONSUMER_TYPES = tuple(ENDPOINTS.keys())
+ENVELOPE_NAMESPACES = {
+    # Официально от техподдержки ЕИС, обращение EIS-891228 (2026-09-23).
+    "individual_person": "http://zakupki.gov.ru/fz44/get-docs-ip/ws",
+    # НЕ подтверждено: техподдержка прислала namespace только для физлиц.
+    # Для юрлиц оставлено прежнее значение (как в примере инструкции, равно
+    # физическому URL) — при переходе на ООО уточнить отдельно, не угадывать
+    # по аналогии с get-docs-ip.
+    "legal_entity": "https://int44-ttls-cert.zakupki.gov.ru/eis-integration/services/getDocsLE",
+    # vsrz: getDocsByOrgRegionRequest для ВСРЗ не строится (см. soap_request.py).
+}
+
+CONSUMER_TYPES = tuple(ENDPOINT_URLS.keys())
 
 
 @dataclass
@@ -69,8 +90,21 @@ class EISConfig:
         return config
 
     @property
-    def endpoint(self) -> str:
-        return ENDPOINTS[self.consumer_type]
+    def endpoint_url(self) -> str:
+        """Физический адрес, на который уходит HTTP-запрос («куда стучимся»)."""
+        return ENDPOINT_URLS[self.consumer_type]
+
+    @property
+    def envelope_namespace(self) -> str:
+        """Значение xmlns:ws в SOAP-конверте («что написано в конверте»).
+
+        Не адрес подключения — см. комментарий к ENVELOPE_NAMESPACES."""
+        try:
+            return ENVELOPE_NAMESPACES[self.consumer_type]
+        except KeyError:
+            raise EISConfigError(
+                f"Для consumer_type={self.consumer_type!r} namespace SOAP-конверта не задан"
+            ) from None
 
     def validate(self) -> None:
         if self.consumer_type not in CONSUMER_TYPES:

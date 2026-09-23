@@ -85,7 +85,7 @@ class EISClient:
         )
         try:
             response = self._session.post(
-                self.config.endpoint, data=request_xml.encode("utf-8"), timeout=self.config.timeout
+                self.config.endpoint_url, data=request_xml.encode("utf-8"), timeout=self.config.timeout
             )
             response.raise_for_status()
         except requests.RequestException as exc:

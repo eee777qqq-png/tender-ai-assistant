@@ -194,3 +194,56 @@ def test_get_construction_documents_requires_classifier(tmp_path):
         assert False, "ожидалась EISRequestError"
     except EISRequestError:
         pass
+
+
+def make_ip_config() -> EISConfig:
+    return EISConfig(
+        consumer_type="individual_person",
+        org_region="77",
+        subsystem_type="RGK",
+        document_type44="contract",
+        individual_person_token="dummy-token",
+    )
+
+
+def test_ip_request_uses_official_namespace_but_posts_to_physical_url():
+    """Namespace конверта и адрес подключения — разные значения (обращение EIS-891228)."""
+    config = make_ip_config()
+    response_xml = RESPONSE_TEMPLATE.format(archive_urls="")
+
+    with patch("requests.Session.post") as mock_post:
+        mock_post.return_value = MagicMock(text=response_xml, raise_for_status=lambda: None)
+        EISClient(config).fetch_archive_urls(date(2026, 9, 21))
+
+    posted_to = mock_post.call_args.args[0]
+    body = mock_post.call_args.kwargs["data"].decode("utf-8")
+    assert posted_to == "https://int.zakupki.gov.ru/eis-integration/services/getDocsIP"
+    assert 'xmlns:ws="http://zakupki.gov.ru/fz44/get-docs-ip/ws"' in body
+    assert "eis-integration/services/getDocsIP" not in body
+
+
+def test_legal_entity_namespace_unchanged_until_confirmed(tmp_path):
+    config = make_config(tmp_path)
+    assert config.endpoint_url == "https://int44-ttls-cert.zakupki.gov.ru/eis-integration/services/getDocsLE"
+    assert config.envelope_namespace == config.endpoint_url
+
+
+# Тело ответа из docs/eis-support-evidence.txt (реальное эхо, 2026-09-22).
+ECHO_RESPONSE = """<?xml version="1.0" encoding="UTF-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">   <soap:Header/>   <soap:Body>      <ws:getDocsByOrgRegionRequest xmlns:ws="https://int.zakupki.gov.ru/eis-integration/services/getDocsIP">         <index>            <id>x</id>            <createDateTime>2026-09-22T17:33:46.193</createDateTime>            <mode>PROD</mode>         </index>         <selectionParams>            <orgRegion>77</orgRegion>            <subsystemType>RGK</subsystemType>            <documentType44>contract</documentType44>            <periodInfo>               <exactDate>2026-09-21</exactDate>            </periodInfo>         </selectionParams>      </ws:getDocsByOrgRegionRequest>   </soap:Body></soap:Envelope>"""
+
+
+def test_echo_response_raises_instead_of_returning_empty_list():
+    with patch("requests.Session.post") as mock_post:
+        mock_post.return_value = MagicMock(text=ECHO_RESPONSE, raise_for_status=lambda: None)
+        try:
+            EISClient(make_ip_config()).fetch_archive_urls(date(2026, 9, 21))
+            assert False, "ожидалась EISRequestError"
+        except EISRequestError as exc:
+            assert "эхо" in str(exc)
+
+
+def test_real_response_without_archives_returns_empty_list():
+    response_xml = RESPONSE_TEMPLATE.format(archive_urls="")
+    with patch("requests.Session.post") as mock_post:
+        mock_post.return_value = MagicMock(text=response_xml, raise_for_status=lambda: None)
+        assert EISClient(make_ip_config()).fetch_archive_urls(date(2026, 9, 21)) == []

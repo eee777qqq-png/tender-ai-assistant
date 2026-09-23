@@ -27,6 +27,11 @@ def build_docs_by_org_region_request(config: EISConfig, exact_date: date, reques
             "не по региону), см. раздел 6.3 инструкции"
         )
 
+    # xmlns:ws — namespace конверта (config.envelope_namespace), НЕ адрес
+    # подключения. Адрес, на который уходит POST, — config.endpoint_url
+    # (используется в client.py). До 2026-09-23 сюда подставлялся физический
+    # URL сервиса, и ЕИС отвечал эхом запроса; официальный namespace для
+    # физлиц прислала техподдержка ЕИС (обращение EIS-891228).
     header = _build_header(config)
     body = f"""\
     <ws:getDocsByOrgRegionRequest>
@@ -46,7 +51,7 @@ def build_docs_by_org_region_request(config: EISConfig, exact_date: date, reques
     </ws:getDocsByOrgRegionRequest>"""
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="{config.endpoint}">
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ws="{escape(config.envelope_namespace)}">
   <soapenv:Header>{header}</soapenv:Header>
   <soapenv:Body>
 {body}

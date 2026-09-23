@@ -19,6 +19,18 @@ def extract_archive_urls(response_xml: str) -> list[str]:
     if fault is not None:
         raise EISRequestError(f"SOAP fault от ЕИС: {ET.tostring(fault, encoding='unicode')}")
 
+    body = root.find("{http://schemas.xmlsoap.org/soap/envelope/}Body")
+    body_elements = list(body) if body is not None else []
+    if any(_local_name(el.tag).endswith("Request") for el in body_elements):
+        # Сервис вернул наш же запрос вместо ...Response. Без этой проверки
+        # эхо неотличимо от честного «за этот день архивов нет» (оба дают
+        # пустой список), и монитор ошибочно помечал бы день обработанным.
+        raise EISRequestError(
+            "ЕИС вернул эхо запроса вместо ответа (в теле — "
+            f"{_local_name(body_elements[0].tag)}, а не ...Response). "
+            "Запрос сервисом не обработан — см. CLAUDE.md, «Известные пробелы», п.3"
+        )
+
     urls = [el.text.strip() for el in root.iter() if _local_name(el.tag) == "archiveUrl" and el.text]
     return urls
 
