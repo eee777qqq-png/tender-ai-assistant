@@ -284,3 +284,41 @@ def test_raw_archives_saved_and_unparsed_xml_counted(tmp_path, caplog):
 
     assert (raw_dir / "2026-09-21_01.zip").read_bytes() == archive_bytes
     assert "XML-документов в архивах — 2 (не разобрались как XML — 1)" in caplog.text
+
+
+def test_find_okpd2_codes_matches_real_ktru_okpd2_path():
+    """Реальная структура документа ЕИС (Edwin, 2026-09-23, запрос за 2026-09-21):
+    код лежит по пути export/contract/products/product/KTRU/OKPD2/code, не в теге
+    с «okpd» в собственном имени. Несколько product — коды со всех, не только первой."""
+    xml = b"""<export>
+      <contract>
+        <products>
+          <product>
+            <KTRU>
+              <OKPD2><code>32.50.21.150</code></OKPD2>
+            </KTRU>
+          </product>
+          <product>
+            <KTRU>
+              <OKPD2><code>41.20.40.000</code></OKPD2>
+            </KTRU>
+          </product>
+        </products>
+      </contract>
+    </export>"""
+    assert EISClient._find_okpd2_codes(xml) == ["32.50.21.150", "41.20.40.000"]
+
+
+def test_find_okpd2_codes_falls_back_to_tag_name_when_no_ktru_path():
+    """Резервный способ (не подтверждён на реальных документах) — для документов
+    без структуры KTRU/OKPD2/code, если такие когда-нибудь встретятся."""
+    xml = b"<Document><OKPDCode>41.20.10.110</OKPDCode></Document>"
+    assert EISClient._find_okpd2_codes(xml) == ["41.20.10.110"]
+
+
+def test_find_okpd2_codes_deduplicates_repeated_values():
+    xml = b"""<export><products>
+      <product><KTRU><OKPD2><code>41.20.40.000</code></OKPD2></KTRU></product>
+      <product><KTRU><OKPD2><code>41.20.40.000</code></OKPD2></KTRU></product>
+    </products></export>"""
+    assert EISClient._find_okpd2_codes(xml) == ["41.20.40.000"]

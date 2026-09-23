@@ -20,6 +20,17 @@ from .tls import combined_ca_bundle_path
 
 logger = logging.getLogger(__name__)
 
+# До 2026-09-23 искали только по ИМЕНИ тега (что-то похожее на "okpd") — не
+# нашли НИ ОДНОГО кода ни в одном из 1640 реальных документов ЕИС (запрос
+# Edwin, 2026-09-21). Реальная структура (подтверждена Edwin на настоящем
+# документе, не по инструкции): код лежит по ПУТИ
+# .../products/product/KTRU/OKPD2/code — сам тег называется просто <code>,
+# «okpd» есть только в имени тега-ПРЕДКА через один уровень. Основной способ
+# теперь — совпадение по последним трём звеньям пути (без учёта регистра);
+# старая эвристика по имени тега оставлена вторым, резервным способом на
+# случай других типов документов (извещения и т.п.), которых мы ещё не
+# видели вживую — она подтверждена НЕ была, в отличие от основного способа.
+_OKPD2_PATH_SUFFIX = ("ktru", "okpd2", "code")
 _OKPD2_TAG_RE = re.compile(r"okpd", re.IGNORECASE)
 _OKPD2_CODE_RE = re.compile(r"^\d{2}(\.\d{1,3}){0,3}$")
 
@@ -204,13 +215,20 @@ class EISClient:
 
     @staticmethod
     def _find_okpd2_codes(xml_bytes: bytes) -> list[str]:
-        """Эвристический поиск ОКПД2-кодов в документе.
+        """Поиск ОКПД2-кодов в документе — по реальной структуре, не по имени тега.
 
-        Точная XSD-схема содержимого документов (извещений/контрактов) не
-        входит в инструкцию по сервису отдачи информации — здесь ищутся
-        элементы, чьё имя похоже на «ОКПД2», и из их текста/атрибутов
-        вытаскивается код вида "41.20.10.110". Стоит уточнить/расширить,
-        когда появятся реальные образцы документов.
+        Основной способ (подтверждён на реальном документе ЕИС, 2026-09-23,
+        см. CLAUDE.md «Известные пробелы» → «Решено»): путь тега оканчивается
+        на .../KTRU/OKPD2/code (без учёта регистра и namespace) — так лежит
+        код позиции в реальном документе. Документ может содержать несколько
+        позиций (`products/product`) — обходится всё дерево, а не первое
+        совпадение, коды собираются со всех.
+
+        Резервный способ — прежняя эвристика по имени тега (что-то похожее
+        на «okpd»): не подтверждена на реальных документах (см. выше — на
+        1640 реальных документах не нашла ничего), оставлена на случай
+        других типов документов (например, извещений), структуру которых
+        мы ещё не видели вживую.
         """
         try:
             root = ET.fromstring(xml_bytes)
@@ -218,13 +236,26 @@ class EISClient:
             return []
 
         codes: list[str] = []
-        for el in root.iter():
-            tag = el.tag.split("}", 1)[-1] if "}" in el.tag else el.tag
-            if _OKPD2_TAG_RE.search(tag):
-                for value in (el.text, *el.attrib.values()):
-                    if value and _OKPD2_CODE_RE.match(value.strip()):
-                        codes.append(value.strip())
+        EISClient._walk_for_okpd2(root, (), codes)
         return codes
+
+    @staticmethod
+    def _walk_for_okpd2(el: ET.Element, path: tuple[str, ...], codes: list[str]) -> None:
+        tag = el.tag.split("}", 1)[-1] if "}" in el.tag else el.tag
+        path = path + (tag.lower(),)
+
+        if path[-3:] == _OKPD2_PATH_SUFFIX:
+            value = (el.text or "").strip()
+            if value and _OKPD2_CODE_RE.match(value) and value not in codes:
+                codes.append(value)
+        elif _OKPD2_TAG_RE.search(tag):
+            for raw in (el.text, *el.attrib.values()):
+                value = raw.strip() if raw else ""
+                if value and _OKPD2_CODE_RE.match(value) and value not in codes:
+                    codes.append(value)
+
+        for child in el:
+            EISClient._walk_for_okpd2(child, path, codes)
 
     @staticmethod
     def _find_reestr_number(xml_bytes: bytes) -> str | None:
