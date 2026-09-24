@@ -1,6 +1,6 @@
 """Извлечение полей ИЗВЕЩЕНИЯ ЕИС (epNotificationEF2020, subsystemType=PRIZ) —
-region_code, publish_date и три вида обеспечения (заявки, исполнения
-контракта, гарантийных обязательств).
+region_code, publish_date, три вида обеспечения, и (с 2026-09-24 вечером)
+остальные поля `Tender` — вплоть до готового `notice_document_to_tender()`.
 
 Отдельно от `client.py`: там — поля, общие для КОНТРАКТОВ и извещений
 (ОКПД2, реестровый номер закупки), здесь — поля, структура которых
@@ -11,14 +11,24 @@ SOAP-фолта: 29 строительных извещений за один д
 9 — по Ростовской области (org_region=61). Пути ниже подтверждены на реальных
 извещениях из обоих запросов.
 
-**Этот модуль НЕ подключён к основному конвейеру Агента 1** (`client.py`,
-`get_construction_documents()`) — тот по-прежнему по умолчанию запрашивает
-КОНТРАКТЫ (`.env`: `EIS_SUBSYSTEM_TYPE=RGK`, `EIS_DOCUMENT_TYPE44=contract`).
-Переход всего монитора на извещения (что закрыло бы куда больше полей
-`Tender`, чем только region_code/publish_date — извещение структурно несёт
-почти всё: name, customer_name, max_price, submission_deadline и т. д.) —
-отдельное решение владельца, см. CLAUDE.md, «Известные пробелы», п.14.
-Здесь — только то, что явно просили подключить в этой сессии.
+**`notice_document_to_tender()` (добавлено 2026-09-24 вечером) замыкает
+Агента 1 на Агента 2 на реальных данных** — 8 из 10 полей `Tender` строятся
+из самого извещения (окпд2/номер закупки — переиспользуют `EISClient`;
+название/заказчик/НМЦК/срок подачи — новые пути ниже; регион/дата публикации
+— уже были). Только `requires_sro`/`min_experience_years` остаются
+обязательными параметрами вызова — на 463 реальных извещениях (Москва +
+Ростовская область, 2026-09-24) не нашлось НИ ОДНОГО тега, похожего на
+допуск СРО или минимальный опыт (см. докстринг самой функции) — честно, не
+потому что не искали.
+
+**Этот модуль по-прежнему НЕ подключён к основному конвейеру `run_monitor.py`**
+(тот работает с КОНТРАКТАМИ по умолчанию, `.env`: `EIS_SUBSYSTEM_TYPE=RGK`,
+`EIS_DOCUMENT_TYPE44=contract`) — но появился отдельный оркестрирующий
+скрипт `src/match_real_notices.py`, который запрашивает ИЗВЕЩЕНИЯ живьём и
+реально вызывает `notice_document_to_tender()` → `match_profile_to_tender()`
+на настоящих документах. Переход самого `run_monitor.py`/`.env` на извещения
+по умолчанию — по-прежнему отдельное решение владельца, см. CLAUDE.md,
+«Известные пробелы», п.13.
 """
 
 from __future__ import annotations
@@ -28,7 +38,10 @@ from dataclasses import dataclass
 from datetime import date
 from xml.etree import ElementTree as ET
 
+from classifier.tender import Tender
 from document_analyst.models import SecurityRequirement
+
+from .client import EISClient
 
 # commonInfo/plannedPublishDate = "2026-09-23+03:00" на реальном документе —
 # дата с часовым поясом, без времени. Берём только дату (до "+"/"T").
@@ -78,6 +91,42 @@ _PROVISION_WARRANTY_AMOUNT_SUFFIX = ("provisionwarranty", "amount")
 _PROVISION_WARRANTY_PART_SUFFIX = ("provisionwarranty", "part")
 
 _NUMBER_RE = re.compile(r"^\d+(\.\d+)?$")
+
+# Номер закупки в ИЗВЕЩЕНИИ лежит по-другому, чем в контракте: не
+# .../foundation/fcsOrder/order/notificationNumber (тот путь — эхо контракта
+# на извещение, которого он касается, `EISClient._find_reestr_number()`
+# честно возвращает `None` на реальном извещении — проверено, 2026-09-24),
+# а прямо в `commonInfo/purchaseNumber` — ровно тот же реестровый номер (19
+# цифр). Специально матчим по 2 звеньям пути (`commoninfo`, не просто
+# `purchasenumber`) — в документе есть ВТОРОЙ, не связанный тег с тем же
+# именем на 4 цифра короче (`contractConditionsInfo/IKZInfo/purchaseNumber`,
+# часть кода ИКЗ) — без привязки к `commonInfo` матчер словил бы его первым
+# и вернул неверное значение.
+_PURCHASE_NUMBER_PATH_SUFFIX = ("commoninfo", "purchasenumber")
+_PURCHASE_NUMBER_VALUE_RE = re.compile(r"^\d{15,25}$")
+
+# Название объекта закупки — подтверждено на реальном извещении, 2026-09-24:
+# .../purchaseObjectsInfo/notDrugPurchaseObjectsInfo/purchaseObject/name.
+# Специально 3 звена пути — тег `name` в документе встречается десятки раз
+# (shortName заказчика, названия КВР, ОКТМО и т. д.), без точной привязки к
+# структуре нашёлся бы не тот `name`.
+_NAME_PATH_SUFFIX = ("notdrugpurchaseobjectsinfo", "purchaseobject", "name")
+
+# Заказчик — .../customerRequirementInfo/customer/fullName, подтверждено на
+# реальном извещении. НЕ `purchaseResponsibleInfo/responsibleOrgInfo/fullName`
+# — это уполномоченное учреждение, которое ведёт закупку (например,
+# технический центр департамента), не сам заказчик по существу; в
+# проверенном документе это разные организации.
+_CUSTOMER_NAME_PATH_SUFFIX = ("customer", "fullname")
+
+# НМЦК — .../contractConditionsInfo/maxPriceInfo/maxPrice, подтверждено на
+# реальном извещении (совпадает с уже проверенным путём для обеспечения).
+_MAX_PRICE_PATH_SUFFIX = ("maxpriceinfo", "maxprice")
+
+# Срок подачи заявок — .../procedureInfo/collectingInfo/endDT, подтверждено
+# на реальном извещении (значение вида "2026-10-01T10:00:00+03:00" — берём
+# только дату, тем же `_DATE_PREFIX_RE`, что и для publish_date).
+_SUBMISSION_DEADLINE_PATH_SUFFIX = ("collectinginfo", "enddt")
 
 
 def _local(tag: str) -> str:
@@ -176,6 +225,148 @@ def extract_security_amounts(xml_bytes: bytes) -> NoticeSecurityAmounts:
         contract_percentage=_find_number(root, _CONTRACT_GUARANTEE_PART_SUFFIX),
         warranty_amount=_find_number(root, _PROVISION_WARRANTY_AMOUNT_SUFFIX),
         warranty_percentage=_find_number(root, _PROVISION_WARRANTY_PART_SUFFIX),
+    )
+
+
+def extract_purchase_number(xml_bytes: bytes) -> str | None:
+    """Реестровый номер закупки — `commonInfo/purchaseNumber` (не тот путь,
+    что у контракта, см. `_PURCHASE_NUMBER_PATH_SUFFIX`). `None`, если не
+    нашёлся или не похож на реестровый номер (15–25 цифр)."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return None
+
+    value = _find_by_path_suffix(root, _PURCHASE_NUMBER_PATH_SUFFIX)
+    if value is None or not _PURCHASE_NUMBER_VALUE_RE.match(value):
+        return None
+    return value
+
+
+def extract_name(xml_bytes: bytes) -> str | None:
+    """Название объекта закупки — см. `_NAME_PATH_SUFFIX`."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return None
+    return _find_by_path_suffix(root, _NAME_PATH_SUFFIX)
+
+
+def extract_customer_name(xml_bytes: bytes) -> str | None:
+    """Заказчик (не уполномоченное учреждение) — см. `_CUSTOMER_NAME_PATH_SUFFIX`."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return None
+    return _find_by_path_suffix(root, _CUSTOMER_NAME_PATH_SUFFIX)
+
+
+def extract_max_price(xml_bytes: bytes) -> float | None:
+    """НМЦК извещения — см. `_MAX_PRICE_PATH_SUFFIX`."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return None
+    return _find_number(root, _MAX_PRICE_PATH_SUFFIX)
+
+
+def extract_submission_deadline(xml_bytes: bytes) -> date | None:
+    """Срок подачи заявок — см. `_SUBMISSION_DEADLINE_PATH_SUFFIX`."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return None
+
+    raw = _find_by_path_suffix(root, _SUBMISSION_DEADLINE_PATH_SUFFIX)
+    if raw is None:
+        return None
+    match = _DATE_PREFIX_RE.match(raw)
+    if not match:
+        return None
+    try:
+        return date.fromisoformat(match.group(1))
+    except ValueError:
+        return None
+
+
+def notice_document_to_tender(xml_bytes: bytes, *, requires_sro: bool, min_experience_years: int) -> Tender:
+    """Строит `Tender` НАПРЯМУЮ из реального извещения ЕИС — в отличие от
+    `tender_adapter.document_to_tender()` (который берёт `ConstructionDocument`
+    от реестра КОНТРАКТОВ и требует все 8 недостающих полей явными
+    параметрами), эта функция сама извлекает 8 из 10 полей `Tender` из
+    самого документа: `okpd2_code`/`purchase_number` — переиспользует
+    `EISClient._find_okpd2_codes()`/новый `extract_purchase_number()`;
+    `name`/`customer_name`/`max_price`/`submission_deadline` — новые пути
+    выше; `region_code`/`publish_date` — уже существующие `extract_region_code()`/
+    `extract_publish_date()`.
+
+    **`requires_sro`/`min_experience_years` остаются обязательными
+    параметрами, не заглушкой.** Проверено на 463 реальных извещениях
+    (Москва + Ростовская область, 2026-09-24, см. `docs`/CLAUDE.md) — ни
+    одного тега, похожего на допуск СРО или минимальный опыт участника, не
+    нашлось нигде. Это может значить: (а) для этих конкретных закупок
+    (текущий ремонт, не капстроительство) доп. требований по ч.1.1 ст.31
+    44-ФЗ нет — они встречаются как категория `requirementsInfo` со ссылкой
+    на статью закона (`ET44`/`TR442` — общие требования, не параметризованные
+    цифрой лет или флагом СРО), но САМИ цифры/флаг, если и есть, не найдены
+    в структуре; или (б) они лежат в приложенном PDF/DOCX-документе
+    (`attachmentsInfo`, например «Требование к содержанию, составу заявки»),
+    не в самом XML — тогда это не задача XML-парсера вообще. Не додумано —
+    честный `ValueError` был бы неверным решением здесь (в отличие от
+    остальных полей — эти два физически не подставить заглушкой 0/False,
+    не исказив матчинг Агента 2, `classifier.matching.match_profile_to_tender()`
+    использует их напрямую), поэтому вызывающий код обязан передать их сам.
+
+    Отказывает (`ValueError`) с точным указанием поля, если хоть одно из
+    автоматически извлекаемых 8 полей не нашлось — не подставляет заглушку."""
+    try:
+        ET.fromstring(xml_bytes)
+    except ET.ParseError as exc:
+        raise ValueError(f"Документ не разбирается как XML: {exc}") from exc
+
+    okpd2_codes = EISClient._find_okpd2_codes(xml_bytes)
+    if not okpd2_codes:
+        raise ValueError("В извещении не нашлось ни одного кода ОКПД2")
+
+    purchase_number = extract_purchase_number(xml_bytes)
+    if purchase_number is None:
+        raise ValueError("В извещении не нашёлся реестровый номер закупки (commonInfo/purchaseNumber)")
+
+    name = extract_name(xml_bytes)
+    if name is None:
+        raise ValueError("В извещении не нашлось название объекта закупки (purchaseObject/name)")
+
+    customer_name = extract_customer_name(xml_bytes)
+    if customer_name is None:
+        raise ValueError("В извещении не нашлось имя заказчика (customerRequirementInfo/customer/fullName)")
+
+    region_code = extract_region_code(xml_bytes)
+    if region_code is None:
+        raise ValueError("Не удалось вывести регион из ИНН заказчика (responsibleOrgInfo/INN)")
+
+    max_price = extract_max_price(xml_bytes)
+    if max_price is None:
+        raise ValueError("В извещении не нашлась НМЦК (contractConditionsInfo/maxPriceInfo/maxPrice)")
+
+    publish_date = extract_publish_date(xml_bytes)
+    if publish_date is None:
+        raise ValueError("В извещении не нашлась дата публикации (commonInfo/plannedPublishDate)")
+
+    submission_deadline = extract_submission_deadline(xml_bytes)
+    if submission_deadline is None:
+        raise ValueError("В извещении не нашёлся срок подачи заявок (procedureInfo/collectingInfo/endDT)")
+
+    return Tender(
+        purchase_number=purchase_number,
+        name=name,
+        customer_name=customer_name,
+        okpd2_code=okpd2_codes[0],
+        region_code=region_code,
+        max_price=max_price,
+        requires_sro=requires_sro,
+        min_experience_years=min_experience_years,
+        publish_date=publish_date,
+        submission_deadline=submission_deadline,
     )
 
 
