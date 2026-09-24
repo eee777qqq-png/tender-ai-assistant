@@ -13,7 +13,7 @@ from .notice_parser import (
     notice_document_to_tender,
     security_amounts_to_requirements,
 )
-from .store import MonitorStore, StoredDocument
+from .store import MonitorStore, StoredDocument, StoredTender
 from .tender_adapter import FIELDS_NOT_YET_EXTRACTABLE, document_to_tender
 
 __all__ = [
@@ -24,6 +24,7 @@ __all__ = [
     "MonitorStore",
     "NoticeSecurityAmounts",
     "StoredDocument",
+    "StoredTender",
     "document_to_tender",
     "extract_customer_name",
     "extract_max_price",

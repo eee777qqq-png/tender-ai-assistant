@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from classifier.tender import Tender
+
 from .client import ConstructionDocument
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "monitor.sqlite3"
@@ -35,6 +37,24 @@ CREATE TABLE IF NOT EXISTS documents (
     discovered_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(fetch_date, file_name, archive_url)
 );
+
+CREATE TABLE IF NOT EXISTS tenders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fetch_date TEXT NOT NULL,
+    purchase_number TEXT NOT NULL,
+    name TEXT NOT NULL,
+    customer_name TEXT NOT NULL,
+    okpd2_code TEXT NOT NULL,
+    region_code TEXT NOT NULL,
+    max_price REAL NOT NULL,
+    requires_sro INTEGER NOT NULL,
+    min_experience_years INTEGER NOT NULL,
+    publish_date TEXT NOT NULL,
+    submission_deadline TEXT NOT NULL,
+    sro_experience_verified INTEGER NOT NULL DEFAULT 0,
+    discovered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(purchase_number)
+);
 """
 
 
@@ -44,6 +64,21 @@ class StoredDocument:
     file_name: str
     archive_url: str
     okpd2_codes: list[str]
+
+
+@dataclass
+class StoredTender:
+    """`Tender`, построенный `notice_document_to_tender()` и сохранённый
+    Монитором. `sro_experience_verified` — честный флаг, не часть `Tender`:
+    `requires_sro`/`min_experience_years` не извлекаются из извещения (см.
+    CLAUDE.md, «Известные пробелы», п.13) — пока это не изменится, флаг
+    всегда `False`, и любой код, читающий `all_tenders()`, обязан считать
+    эти два поля непроверенным предположением (сейчас — False/0), а не
+    подтверждённым требованием закупки."""
+
+    fetch_date: date
+    tender: Tender
+    sro_experience_verified: bool
 
 
 class MonitorStore:
@@ -100,6 +135,64 @@ class MonitorStore:
                 file_name=row[1],
                 archive_url=row[2],
                 okpd2_codes=row[3].split(",") if row[3] else [],
+            )
+            for row in rows
+        ]
+
+    def save_tenders(
+        self, fetch_date: date, tenders: list[Tender], *, sro_experience_verified: bool = False
+    ) -> None:
+        """Сохраняет `Tender`-ы, построенные `notice_document_to_tender()` за
+        `fetch_date` (обычно — Агентом 1, `run_monitor.py`). `purchase_number`
+        уникален — повторный вызов с тем же номером не создаёт дубликат
+        (`INSERT OR IGNORE`), это ожидаемо при повторной обработке дня."""
+        with closing(self._connect()) as conn:
+            for tender in tenders:
+                conn.execute(
+                    "INSERT OR IGNORE INTO tenders "
+                    "(fetch_date, purchase_number, name, customer_name, okpd2_code, region_code, "
+                    "max_price, requires_sro, min_experience_years, publish_date, submission_deadline, "
+                    "sro_experience_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        fetch_date.isoformat(),
+                        tender.purchase_number,
+                        tender.name,
+                        tender.customer_name,
+                        tender.okpd2_code,
+                        tender.region_code,
+                        tender.max_price,
+                        int(tender.requires_sro),
+                        tender.min_experience_years,
+                        tender.publish_date.isoformat(),
+                        tender.submission_deadline.isoformat(),
+                        int(sro_experience_verified),
+                    ),
+                )
+            conn.commit()
+
+    def all_tenders(self) -> list[StoredTender]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT fetch_date, purchase_number, name, customer_name, okpd2_code, region_code, "
+                "max_price, requires_sro, min_experience_years, publish_date, submission_deadline, "
+                "sro_experience_verified FROM tenders ORDER BY fetch_date"
+            ).fetchall()
+        return [
+            StoredTender(
+                fetch_date=date.fromisoformat(row[0]),
+                tender=Tender(
+                    purchase_number=row[1],
+                    name=row[2],
+                    customer_name=row[3],
+                    okpd2_code=row[4],
+                    region_code=row[5],
+                    max_price=row[6],
+                    requires_sro=bool(row[7]),
+                    min_experience_years=row[8],
+                    publish_date=date.fromisoformat(row[9]),
+                    submission_deadline=date.fromisoformat(row[10]),
+                ),
+                sro_experience_verified=bool(row[11]),
             )
             for row in rows
         ]

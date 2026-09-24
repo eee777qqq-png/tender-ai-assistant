@@ -77,8 +77,13 @@ class EISConfig:
         config = cls(
             consumer_type=os.getenv("EIS_CONSUMER_TYPE", "legal_entity"),
             org_region=os.getenv("EIS_ORG_REGION", "77"),
-            subsystem_type=os.getenv("EIS_SUBSYSTEM_TYPE", "RGK"),
-            document_type44=os.getenv("EIS_DOCUMENT_TYPE44", "contract"),
+            # Извещения (не контракты) — продакшен-умолчание с 2026-09-24,
+            # подтверждено реальным запросом (см. CLAUDE.md). Значение имеет
+            # смысл, только если .env вообще не задаёт эти переменные —
+            # реальный .env их задаёт явно, этот fallback важен для новых
+            # окружений/тестов без .env.
+            subsystem_type=os.getenv("EIS_SUBSYSTEM_TYPE", "PRIZ"),
+            document_type44=os.getenv("EIS_DOCUMENT_TYPE44", "epNotificationEF2020"),
             client_cert=os.getenv("EIS_CLIENT_CERT", ""),
             client_key=os.getenv("EIS_CLIENT_KEY", ""),
             individual_person_token=os.getenv("EIS_INDIVIDUAL_PERSON_TOKEN", ""),
