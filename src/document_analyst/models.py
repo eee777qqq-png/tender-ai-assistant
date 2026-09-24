@@ -40,9 +40,16 @@ class SubmissionTimeline:
 
 @dataclass
 class SecurityRequirement:
-    """Требование к обеспечению — заявки или исполнения контракта."""
+    """Требование к обеспечению — заявки, исполнения контракта или
+    гарантийных обязательств.
 
-    kind: str  # "bid" | "contract"
+    `kind="warranty"` (обеспечение гарантийных обязательств) добавлено
+    2026-09-24 вместе с `eis_client.notice_parser` — извещения ЕИС несут
+    его отдельным структурированным полем (`provisionWarranty`), эвристика
+    Агента 3 по тексту документации это требование отдельно пока не ищет
+    (см. CLAUDE.md, «Известные пробелы», п.5)."""
+
+    kind: str  # "bid" | "contract" | "warranty"
     percentage: float | None = None
     amount: float | None = None
     raw_text: str = ""
