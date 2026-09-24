@@ -2,22 +2,42 @@
 
 Помимо принадлежности ОКПД2 к разделу «Строительство» (`ConstructionClassifier`),
 здесь проверяются требования конкретной закупки к конкретному клиенту:
-регион, членство в СРО, опыт, финансовая готовность. Критерий финансовой
-готовности (`avg_annual_revenue >= max_price`) — упрощённая эвристика для
-прототипа, не согласованный с владельцем продукта критерий скоринга
-(это, по-хорошему, будущая зона ответственности Агента 5 — Скоринг
-вероятности победы); здесь она нужна только чтобы прототип показывал
-осмысленный результат на тестовых данных.
+регион, членство в СРО, опыт, финансовая готовность.
+
+Критерий финансовой готовности — единственный из шести, у которого два
+режима, потому что Агент 2 в конвейере вызывается ДО Агента 4/5 (себестоимость
+и маржа по конкретной закупке считаются намного позже — после сборки пакета
+документов и выбора экспертом позиций сметы, см. CLAUDE.md, п.12 «Известных
+пробелов»). Гонять полную смету и экспертную проверку по каждой закупке,
+прежде чем узнать, стоит ли вообще ей заниматься, — не то, для чего нужен
+быстрый фильтр Агента 2. Поэтому:
+
+- без `profitability` (обычный путь — быстрая фильтрация потока закупок из
+  Агента 1, до того как Агент 4/5 вообще запускались) — используется грубая
+  эвристика `avg_annual_revenue >= max_price`, явно помеченная в сообщении
+  как предварительная, не окончательная;
+- с `profitability` (повторная, уточняющая проверка уже после того, как
+  Агент 5 посчитал реальную маржу по этой паре клиент+закупка — например,
+  непосредственно перед сборкой итоговой сводки для клиента у Агента 8) —
+  критерий заменяется на `margin > 0`, настоящую посчитанную выгоду, а не
+  прокси через выручку.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from onboarding.models import ClientProfile
 
 from .okpd2 import ConstructionClassifier
 from .tender import Tender
+
+if TYPE_CHECKING:
+    # Только для аннотаций типов (`from __future__ import annotations` выше
+    # не вычисляет их в рантайме) — иначе реальный импорт создал бы цикл
+    # classifier -> profitability_estimator -> classifier.tender.
+    from profitability_estimator.models import ProfitabilityEstimate
 
 
 @dataclass
@@ -49,7 +69,10 @@ class MatchResult:
 
 
 def match_profile_to_tender(
-    profile: ClientProfile, tender: Tender, classifier: ConstructionClassifier
+    profile: ClientProfile,
+    tender: Tender,
+    classifier: ConstructionClassifier,
+    profitability: "ProfitabilityEstimate | None" = None,
 ) -> MatchResult:
     criteria: list[MatchCriterion] = []
 
@@ -108,19 +131,55 @@ def match_profile_to_tender(
         )
     )
 
-    financial_ok = profile.financial.avg_annual_revenue >= tender.max_price
-    criteria.append(
-        MatchCriterion(
-            "financial_capacity",
-            financial_ok,
-            "Финансовой готовности достаточно"
-            if financial_ok
-            else f"НМЦК {tender.max_price:,.0f} ₽ превышает среднегодовую выручку клиента "
-            f"{profile.financial.avg_annual_revenue:,.0f} ₽",
-        )
-    )
+    criteria.append(_financial_capacity_criterion(profile, tender, profitability))
 
     return MatchResult(tender=tender, client_id=profile.client_id, criteria=criteria)
+
+
+def _financial_capacity_criterion(
+    profile: ClientProfile, tender: Tender, profitability: "ProfitabilityEstimate | None"
+) -> MatchCriterion:
+    if profitability is None:
+        financial_ok = profile.financial.avg_annual_revenue >= tender.max_price
+        return MatchCriterion(
+            "financial_capacity",
+            financial_ok,
+            "Финансовой готовности достаточно (предварительная оценка по выручке — "
+            "Агент 5 ещё не считал реальную маржу по этой закупке)"
+            if financial_ok
+            else f"НМЦК {tender.max_price:,.0f} ₽ превышает среднегодовую выручку клиента "
+            f"{profile.financial.avg_annual_revenue:,.0f} ₽ (предварительная оценка по "
+            "выручке — Агент 5 ещё не считал реальную маржу по этой закупке)",
+        )
+
+    if profitability.tender_purchase_number != tender.purchase_number:
+        raise ValueError(
+            "Оценка выгоды Агента 5 относится к закупке "
+            f"{profitability.tender_purchase_number!r}, а матчинг считается для закупки "
+            f"{tender.purchase_number!r}"
+        )
+    if profitability.client_id != profile.client_id:
+        raise ValueError(
+            f"Оценка выгоды Агента 5 относится к клиенту {profitability.client_id!r}, а "
+            f"матчинг считается для клиента {profile.client_id!r}"
+        )
+
+    if profitability.margin is None:
+        return MatchCriterion(
+            "financial_capacity",
+            False,
+            "Маржа не рассчитана Агентом 5 (налоговый режим клиента требует уточнения с "
+            "бухгалтером) — финансовая готовность не подтверждена",
+        )
+
+    margin_ok = profitability.margin > 0
+    return MatchCriterion(
+        "financial_capacity",
+        margin_ok,
+        f"Закупка выгодна: маржа Агента 5 положительна ({profitability.margin:,.0f} ₽)"
+        if margin_ok
+        else f"Закупка невыгодна: маржа Агента 5 не положительна ({profitability.margin:,.0f} ₽)",
+    )
 
 
 def find_matching_tenders(

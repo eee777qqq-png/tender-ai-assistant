@@ -286,11 +286,21 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
         abs=0.5,
     )
 
+    # Агент 2 (повторно) — теперь, когда Агент 5 посчитал реальную маржу,
+    # критерий финансовой готовности пересчитывается по ней, а не по грубой
+    # эвристике "выручка >= НМЦК", использованной на самом первом проходе
+    # выше (см. CLAUDE.md, «Известные пробелы», закрытые пункты 1/2).
+    final_match = match_profile_to_tender(profile, tender, classifier, profitability=profitability)
+    print(f"\n=== Агент 2 (повторно, с реальной маржой Агента 5) ===")
+    for c in final_match.criteria:
+        print(f"  [{'OK' if c.passed else 'FAIL'}] {c.name}: {c.message}")
+    assert final_match.is_match, f"Ожидали, что реальная маржа тоже положительна: {final_match.failed_reasons}"
+
     # Агент 8 — консультант для клиента: собирает итог ВСЕЙ цепочки, включая
     # маржу и риски Агента 5 — до 2026-09-21 маржа считалась, но до
     # собственника в сводке не доходила вообще (Агент 8 не принимал
     # `ProfitabilityEstimate` как вход).
-    summary = build_client_summary(match, result, package, profitability)
+    summary = build_client_summary(final_match, result, package, profitability)
 
     print(f"\n=== Агент 8: Консультант для клиента ===")
     print(render_summary_text(summary))
