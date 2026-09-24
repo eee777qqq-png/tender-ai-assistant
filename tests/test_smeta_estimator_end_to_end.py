@@ -19,9 +19,10 @@ fgiscs.minstroyrf.ru/prices для Москвы, 3 квартал 2026 года.
 см. CLAUDE.md, «Известные пробелы»).
 
 **Дополнено вечером 2026-09-18** — оплата труда машиниста через
-`LabourMach`/`DriverCode` (`MachineLabourInfo`). Логика подтверждена пока
-только устно на звонке со Smetrix, письменного подтверждения нет — см.
-`pricing.py` и CLAUDE.md, «Известные пробелы», п.12, не закрыт.
+`LabourMach`/`DriverCode` (`MachineLabourInfo`). Логика подтверждена устно
+на звонке со Smetrix и независимо, 2026-09-24, из первоисточника на
+`fgiscs.minstroyrf.ru` — см. `pricing.py` и CLAUDE.md, «Известные пробелы»
+→ «Решено».
 
 Печатает результат каждого шага при запуске с `pytest -s`, по аналогии с
 `tests/test_end_to_end_pipeline.py`.
@@ -138,8 +139,10 @@ def test_end_to_end_search_price_and_expert_review_for_a_roofing_work_item():
     # DriverCode есть — 4-100-060/4-100-040 из фикстуры worker_salary),
     # но не для битумного котла (LabourMach=0, самоходное электрическое
     # оборудование без отдельного оператора). Логика — см. models.
-    # MachineLabourInfo: подтверждена устно, не письменно, пересмотреть при
-    # письменном ответе Smetrix, если он разойдётся.
+    # MachineLabourInfo: подтверждена устно и независимо, из
+    # первоисточника на fgiscs.minstroyrf.ru, 2026-09-24 (994.18 для
+    # 4-100-060 совпадает с тем, что показывает публичная страница ФГИС ЦС
+    # для крана 91.05.05-015 за 3 квартал 2026 по Москве).
     by_code = {r.resource_code: r for r in top.priced.resolutions}
     assert by_code["91.05.01-017"].machinist_wage_added == pytest.approx(994.18)  # башенный кран
     assert by_code["91.05.05-015"].machinist_wage_added == pytest.approx(994.18)  # кран на автоходу

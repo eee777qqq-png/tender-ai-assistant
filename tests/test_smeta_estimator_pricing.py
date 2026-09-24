@@ -109,9 +109,10 @@ def test_original_candidate_is_not_mutated():
     assert candidate.priced is None
 
 
-# -- добавка оплаты труда машиниста через LabourMach/DriverCode (п.12
-# «Известных пробелов», подтверждено пока только устно на звонке со
-# Smetrix, не письменно — см. models.MachineLabourInfo) -------------------
+# -- добавка оплаты труда машиниста через LabourMach/DriverCode (закрытый
+# пункт «Известных пробелов» — подтверждено устно на звонке со Smetrix и
+# независимо, из первоисточника на fgiscs.minstroyrf.ru, 2026-09-24 —
+# см. models.MachineLabourInfo) --------------------------------------------
 
 
 def test_machinist_wage_is_added_when_labour_mach_is_positive():

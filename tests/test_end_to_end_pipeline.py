@@ -209,9 +209,9 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
         **parse_current_prices_json((FIXTURES / "current_prices_moscow_machines_sample.json").read_bytes()),
         **parse_worker_salary_registry((FIXTURES / "worker_salary_moscow_sample.json").read_bytes()),
     }
-    # Оплата труда машиниста через LabourMach/DriverCode — подтверждено пока
-    # только устно на звонке со Smetrix, не письменно (см. CLAUDE.md,
-    # «Известные пробелы», п.12, не закрыт; models.MachineLabourInfo).
+    # Оплата труда машиниста через LabourMach/DriverCode — подтверждена устно
+    # на звонке со Smetrix и независимо, из первоисточника на fgiscs.minstroyrf.ru
+    # (см. CLAUDE.md, «Известные пробелы» → «Решено»; models.MachineLabourInfo).
     machine_labour = parse_fsbc_machine_labour_xml((FIXTURES / "fsbc_machines_sample.xml").read_bytes())
 
     match_result = match_work_item(
