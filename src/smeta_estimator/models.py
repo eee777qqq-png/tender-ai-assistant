@@ -66,6 +66,23 @@ class GesnWorkItem:
 
 
 @dataclass
+class MaterialCandidateInfo:
+    """Один материал из каталога ФСБЦ с названием и текущей ценой — вход для
+    `material_candidates.suggest_material_candidates()`.
+
+    Отдельно от `resource_base_prices`/`current_prices` (там только код ->
+    цена, без названия), потому что подбор кандидатов-продуктов под
+    категорию `AbstractResource` ищет именно по СОВПАДЕНИЮ НАЗВАНИЯ —
+    точного кода категории для конкретного продукта нет и не может быть,
+    в этом и смысл `AbstractResource` (см. `parse_material_catalog_xml`)."""
+
+    code: str
+    name: str
+    unit: str
+    price: float
+
+
+@dataclass
 class MachineLabourInfo:
     """Трудозатраты машиниста на единицу машино-часа конкретной машины —
     из атрибутов `LabourMach`/`DriverCode` в ФСБЦ_Маш.xml (`fsnb_parser.

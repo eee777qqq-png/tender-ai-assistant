@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from xml.etree import ElementTree as ET
 
-from .models import GesnResourceUsage, GesnWorkItem, MachineLabourInfo
+from .models import GesnResourceUsage, GesnWorkItem, MachineLabourInfo, MaterialCandidateInfo
 
 
 def parse_gesn_xml(xml_bytes: bytes) -> list[GesnWorkItem]:
@@ -112,6 +112,29 @@ def parse_fsbc_materials_xml(xml_bytes: bytes) -> dict[str, float]:
         if code and price_el is not None and price_el.get("Cost"):
             prices[code] = _to_float(price_el.get("Cost"))
     return prices
+
+
+def parse_material_catalog_xml(xml_bytes: bytes) -> list[MaterialCandidateInfo]:
+    """Тот же формат файла, что `parse_fsbc_materials_xml`, но сохраняет
+    `Name`/`MeasureUnit`, а не только код->цена — нужны для подбора
+    кандидатов-продуктов под категорию `AbstractResource` по совпадению
+    названия (`material_candidates.suggest_material_candidates()`)."""
+    root = ET.fromstring(xml_bytes)
+    catalog: list[MaterialCandidateInfo] = []
+    for res_el in root.iter("Resource"):
+        code = res_el.get("Code")
+        price_el = res_el.find("Prices/Price")
+        if not code or price_el is None or not price_el.get("Cost"):
+            continue
+        catalog.append(
+            MaterialCandidateInfo(
+                code=code,
+                name=res_el.get("Name", ""),
+                unit=res_el.get("MeasureUnit", ""),
+                price=_to_float(price_el.get("Cost")),
+            )
+        )
+    return catalog
 
 
 def parse_fsbc_machines_xml(xml_bytes: bytes) -> dict[str, float]:

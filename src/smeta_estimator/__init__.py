@@ -11,12 +11,15 @@ from .fsnb_parser import (
     parse_fsbc_machines_xml,
     parse_fsbc_materials_xml,
     parse_gesn_xml,
+    parse_material_catalog_xml,
 )
 from .matcher import AGENT_NAME, match_work_item, review_match_result
+from .material_candidates import AbstractResourceCandidates, suggest_material_candidates
 from .models import (
     GesnResourceUsage,
     GesnWorkItem,
     MachineLabourInfo,
+    MaterialCandidateInfo,
     MatchResult,
     RateCandidate,
     RegionalPriceResult,
@@ -54,10 +57,12 @@ __all__ = [
     "DEFAULT_ARCHIVE_URL",
     "GOSR_SOURCE_ID_TEMPLATE",
     "PILOT_PRICE_ZONES",
+    "AbstractResourceCandidates",
     "GesnResourceUsage",
     "GesnWorkItem",
     "GosrIndexEntry",
     "MachineLabourInfo",
+    "MaterialCandidateInfo",
     "MatchResult",
     "RateCandidate",
     "RegionalPriceResult",
@@ -82,10 +87,12 @@ __all__ = [
     "parse_fsbc_materials_xml",
     "parse_gesn_xml",
     "parse_gosr_workbook",
+    "parse_material_catalog_xml",
     "parse_worker_salary_registry",
     "price_candidate_for_region",
     "price_candidates_for_region",
     "resolve_resource_unit_price",
     "review_match_result",
     "search_candidates",
+    "suggest_material_candidates",
 ]
