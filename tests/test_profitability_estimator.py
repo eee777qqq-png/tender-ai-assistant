@@ -173,16 +173,64 @@ def test_usn_15_with_vat_taxes_profit_not_revenue():
     assert result.margin == pytest.approx(1_295_528.77, abs=0.5)
 
 
-def test_osn_vat_22_can_produce_a_negative_margin_when_costs_are_high():
-    """Инструмент обязан честно показать убыточный сценарий, а не скрыть его —
-    в этом сценарии ОСН+НДС 22% при тех же вводных даёт отрицательную маржу."""
-    profile = make_profile(tax_regime=TaxRegimeChoice.OSN_VAT_22)
+def test_osn_ooo_vat_22_uses_25_percent_profit_tax_rate():
+    """Ставка налога на прибыль ООО на ОСН — 25% (ст. 284 НК РФ, действует с
+    01.01.2025, было ошибочно зафиксировано 20% — см. CLAUDE.md, «Известные
+    пробелы», п.6). Инструмент обязан честно показать убыточный сценарий, а
+    не скрыть его — в этом сценарии ОСН+НДС 22% при тех же вводных даёт
+    отрицательную маржу."""
+    profile = make_profile(tax_regime=TaxRegimeChoice.OSN_OOO_VAT_22)
     tender = find_tender(TENDER_PURCHASE_NUMBER)
     extracted = reviewed_requirements()
 
     result = estimate_profitability(profile, tender, make_cost_estimate(), extracted)
 
-    assert result.margin == pytest.approx(-164_208.22, abs=0.5)
+    # НДС 22% от НМЦК (1 760 000) + налог на прибыль 25% от прибыли (1 994 739.73 * 0.25)
+    assert result.taxes == pytest.approx(2_258_684.93, abs=0.5)
+    assert result.margin == pytest.approx(-263_945.21, abs=0.5)
+
+
+def test_osn_ip_vat_22_uses_progressive_ndfl_not_flat_rate():
+    """ИП на ОСН платит НДФЛ, не налог на прибыль — другой налог с того же
+    дохода, чем у ООО (см. CLAUDE.md, «Известные пробелы», п.6). При той же
+    прибыли (1 994 739.73, целиком в первой ступени шкалы до 2,4 млн) ставка
+    13% даёт меньший налог и другую маржу, чем у ООО (25%)."""
+    profile = make_profile(tax_regime=TaxRegimeChoice.OSN_IP_VAT_22)
+    tender = find_tender(TENDER_PURCHASE_NUMBER)
+    extracted = reviewed_requirements()
+
+    result = estimate_profitability(profile, tender, make_cost_estimate(), extracted)
+
+    # НДС 22% от НМЦК (1 760 000) + НДФЛ 13% от прибыли (1 994 739.73 * 0.13,
+    # вся прибыль ниже порога 2.4 млн — одна ступень шкалы)
+    assert result.taxes == pytest.approx(2_019_316.16, abs=0.5)
+    assert result.margin == pytest.approx(-24_576.44, abs=0.5)
+    assert any(
+        "совокупного годового дохода" in f and "НДФЛ" in f for f in result.risk_flags
+    )
+
+
+def test_osn_ip_progressive_ndfl_crosses_multiple_brackets_on_large_profit():
+    """Отдельная проверка самой прогрессивности шкалы (13/15/18/20/22%) — не
+    только что применяется одна ставка, а что ступени действительно
+    складываются по порогам ст. 224 НК РФ, а не берётся единая ставка от
+    верхней границы дохода."""
+    profile = make_profile(tax_regime=TaxRegimeChoice.OSN_IP_VAT_22)
+    tender = find_tender("0350200003426000202")  # детский сад, НМЦК 350 000 000
+    extracted = extract_requirements(
+        "0350200003426000202", SAMPLE_DOCUMENTS["0350200003426000202"]
+    )
+    extracted.mark_expert_reviewed(reviewer="Edwin")
+
+    result = estimate_profitability(
+        profile, tender, make_cost_estimate(total_cost=300_000_000), extracted
+    )
+
+    # Прибыль (48 757 260.27) пересекает 4 из 5 ступеней шкалы:
+    # 2.4М*13% + 2.6М*15% + 15М*18% + 28.757...М*20% = 9 153 452.05 НДФЛ
+    # + НДС 22% от НМЦК (77 000 000) = 86 153 452.05
+    assert result.taxes == pytest.approx(86_153_452.05, abs=1.0)
+    assert result.margin == pytest.approx(-37_396_191.78, abs=1.0)
 
 
 def test_rejects_agent_3_output_for_a_different_tender():

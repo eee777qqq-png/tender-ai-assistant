@@ -16,6 +16,17 @@
 
 Этот модуль — справочник для валидации выбора в форме (`TAX_REGIME_OPTIONS`),
 не калькулятор.
+
+**2026-09-25:** прежний единый вариант «ОСН + НДС 22%» разделён на
+`OSN_IP_VAT_22` и `OSN_OOO_VAT_22` — у ИП и у ООО на ОСН разные налоги с
+дохода (НДФЛ по прогрессивной шкале у ИП, налог на прибыль у ООО), одной
+ставки для обоих не существует. Клиент выбирает нужный вариант сам, по тому
+же принципу, что и весь остальной справочник — сервис не выводит
+организационно-правовую форму клиента из других полей профиля. Сами формулы
+расчёта — в `profitability_estimator.estimator` (Агент 5), не здесь; этот
+файл только даёт клиенту выбрать из списка. Подробности находок (ставка
+налога на прибыль 25%, пороги прогрессивной шкалы НДФЛ) — см. CLAUDE.md,
+«Известные пробелы», п.6.
 """
 
 from __future__ import annotations
@@ -25,7 +36,7 @@ from enum import Enum
 
 
 class TaxRegimeChoice(str, Enum):
-    """Ровно 8 вариантов, которые видит клиент в форме — не более и не менее."""
+    """Ровно 9 вариантов, которые видит клиент в форме — не более и не менее."""
 
     USN_6_NO_VAT = "usn_6_no_vat"  # УСН 6% без НДС
     USN_6_VAT_5 = "usn_6_vat_5"  # УСН 6% + НДС 5%
@@ -33,7 +44,8 @@ class TaxRegimeChoice(str, Enum):
     USN_15_NO_VAT = "usn_15_no_vat"  # УСН 15% без НДС
     USN_15_VAT_5 = "usn_15_vat_5"  # УСН 15% + НДС 5%
     USN_15_VAT_7 = "usn_15_vat_7"  # УСН 15% + НДС 7%
-    OSN_VAT_22 = "osn_vat_22"  # ОСН + НДС 22% (с вычетом)
+    OSN_IP_VAT_22 = "osn_ip_vat_22"  # ИП на ОСН + НДС 22% (с вычетом)
+    OSN_OOO_VAT_22 = "osn_ooo_vat_22"  # ООО на ОСН + НДС 22% (с вычетом)
     OTHER_NEEDS_CLARIFICATION = "other_needs_clarification"  # Другое / требует уточнения с бухгалтером
 
 
@@ -52,7 +64,8 @@ TAX_REGIME_OPTIONS: tuple[TaxRegimeOption, ...] = (
     TaxRegimeOption(TaxRegimeChoice.USN_15_NO_VAT, "УСН 15% без НДС"),
     TaxRegimeOption(TaxRegimeChoice.USN_15_VAT_5, "УСН 15% + НДС 5%"),
     TaxRegimeOption(TaxRegimeChoice.USN_15_VAT_7, "УСН 15% + НДС 7%"),
-    TaxRegimeOption(TaxRegimeChoice.OSN_VAT_22, "ОСН + НДС 22% (с вычетом)"),
+    TaxRegimeOption(TaxRegimeChoice.OSN_IP_VAT_22, "ИП на ОСН + НДС 22% (с вычетом)"),
+    TaxRegimeOption(TaxRegimeChoice.OSN_OOO_VAT_22, "ООО на ОСН + НДС 22% (с вычетом)"),
     TaxRegimeOption(
         TaxRegimeChoice.OTHER_NEEDS_CLARIFICATION, "Другое / требует уточнения с бухгалтером"
     ),

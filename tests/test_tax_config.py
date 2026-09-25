@@ -12,9 +12,11 @@ from onboarding.tax_config import (
 )
 
 
-def test_exactly_eight_fixed_regime_combinations():
-    assert len(TAX_REGIME_OPTIONS) == 8
-    assert len(TaxRegimeChoice) == 8
+def test_exactly_nine_fixed_regime_combinations():
+    """Было 8 — 2026-09-25 прежний единый «ОСН + НДС 22%» разделён на ИП и
+    ООО (разные налоги с дохода, см. CLAUDE.md, «Известные пробелы», п.6)."""
+    assert len(TAX_REGIME_OPTIONS) == 9
+    assert len(TaxRegimeChoice) == 9
 
     labels = {opt.label for opt in TAX_REGIME_OPTIONS}
     assert labels == {
@@ -24,7 +26,8 @@ def test_exactly_eight_fixed_regime_combinations():
         "УСН 15% без НДС",
         "УСН 15% + НДС 5%",
         "УСН 15% + НДС 7%",
-        "ОСН + НДС 22% (с вычетом)",
+        "ИП на ОСН + НДС 22% (с вычетом)",
+        "ООО на ОСН + НДС 22% (с вычетом)",
         "Другое / требует уточнения с бухгалтером",
     }
 
@@ -35,7 +38,7 @@ def test_label_for_every_choice_is_defined():
         assert label  # ни для одного варианта не должно быть пустой подписи
 
 
-def test_is_valid_choice_accepts_all_eight_and_rejects_garbage():
+def test_is_valid_choice_accepts_all_nine_and_rejects_garbage():
     for choice in TaxRegimeChoice:
         assert is_valid_choice(choice.value)
     assert not is_valid_choice("НДС 20%")  # не входит в фиксированный список
@@ -44,17 +47,17 @@ def test_is_valid_choice_accepts_all_eight_and_rejects_garbage():
 
 def test_unverified_notes_flag_the_2027_vat_rumor_without_changing_options():
     """Непроверенная информация — это заметка на будущее, а не действующее
-    правило: список из 8 вариантов не должен меняться сам по себе из-за неё."""
+    правило: список из 9 вариантов не должен меняться сам по себе из-за неё."""
     assert any("2027" in note for note in UNVERIFIED_NOTES)
     assert any("20%" in note for note in UNVERIFIED_NOTES)
-    assert len(TAX_REGIME_OPTIONS) == 8
+    assert len(TAX_REGIME_OPTIONS) == 9
 
 
 def test_financial_readiness_requires_a_tax_regime_choice_to_be_filled():
     financial = FinancialReadiness(avg_annual_revenue=50_000_000)
     assert not financial.is_filled()  # tax_regime ещё не выбран
 
-    financial.tax_regime = TaxRegimeChoice.OSN_VAT_22
+    financial.tax_regime = TaxRegimeChoice.OSN_OOO_VAT_22
     assert financial.is_filled()
 
 
