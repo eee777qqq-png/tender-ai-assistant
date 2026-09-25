@@ -61,6 +61,11 @@ def test_flags_ambiguous_condition_and_nonstandard_penalty_for_kindergarten():
     assert categories == {RiskCategory.AMBIGUOUS_CONDITION, RiskCategory.NONSTANDARD_PENALTY}
     assert len(result.hidden_risks) == 2
 
+    penalty = next(r for r in result.hidden_risks if r.category == RiskCategory.NONSTANDARD_PENALTY)
+    assert penalty.rate_pct == 15.0
+    ambiguous = next(r for r in result.hidden_risks if r.category == RiskCategory.AMBIGUOUS_CONDITION)
+    assert ambiguous.rate_pct is None
+
 
 def test_plaster_document_has_no_hidden_risks():
     """Контрольный случай: обычные, некритические условия (штрафы с

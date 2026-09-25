@@ -77,6 +77,12 @@ class HiddenRisk:
     category: RiskCategory
     excerpt: str  # цитата из документа
     explanation: str  # почему это риск
+    # Извлечённое числовое значение находки (например, % штрафа/пени в день) —
+    # заполняется, только когда экстрактор реально его нашёл; сейчас это
+    # только NONSTANDARD_PENALTY (extractor.py). None — не значит «нет числа
+    # в тексте», значит «экстрактор его не извлёк отдельно» (см. CLAUDE.md,
+    # «Известные пробелы» про Агента 8).
+    rate_pct: float | None = None
 
 
 @dataclass

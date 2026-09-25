@@ -122,6 +122,7 @@ def _scan_hidden_risks(sentence: str) -> list[HiddenRisk]:
                         f"Штраф {rate:g}% цены контракта за каждый день просрочки — заметно "
                         "выше типовой практики (доли процента в день)"
                     ),
+                    rate_pct=rate,
                 )
             )
     return risks

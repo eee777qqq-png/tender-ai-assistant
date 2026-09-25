@@ -157,6 +157,26 @@ def test_rejects_mismatched_results_from_different_tenders():
         assert "разным закупкам" in str(exc)
 
 
+def test_nonstandard_penalty_risk_explanation_includes_extracted_rate():
+    """Частичное улучшение пересказа риска (CLAUDE.md, Агент 8, 2026-09-25):
+    когда Агент 3 извлёк конкретную ставку штрафа, объяснение для собственника
+    должно содержать именно её, а не только общую формулировку категории."""
+    profile = make_ready_profile()
+    match, completeness, package, extracted = run_pipeline(profile, "0350200003426000202")
+
+    summary = build_client_summary(match, completeness, package)
+
+    penalty_risks = [r for r in summary.risks if "15%" in r.why_it_matters]
+    assert len(penalty_risks) == 1
+    assert "штраф" in penalty_risks[0].why_it_matters.lower()
+
+    # Категория без извлечённого числа (расплывчатая формулировка) по-прежнему
+    # получает общий шаблон по категории, не выдуманную цифру.
+    ambiguous_risks = [r for r in summary.risks if "15%" not in r.why_it_matters]
+    assert len(ambiguous_risks) == 1
+    assert "не до конца понятно" in ambiguous_risks[0].why_it_matters.lower()
+
+
 def test_render_summary_text_is_plain_and_includes_all_sections():
     profile = make_ready_profile()
     match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
