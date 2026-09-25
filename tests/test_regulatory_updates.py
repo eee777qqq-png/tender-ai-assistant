@@ -197,6 +197,35 @@ def test_cannot_decide_the_same_update_twice(tmp_path):
         store.approve_update(update.update_id, reviewer="Edwin", approved=False, reason="передумал")
 
 
+def test_is_due_for_check_is_true_before_any_check_was_ever_recorded(tmp_path):
+    store = make_store(tmp_path)
+
+    assert store.is_due_for_check("tax_profit_rate_ooo", min_interval_days=90) is True
+    assert store.last_checked_at("tax_profit_rate_ooo") is None
+
+
+def test_record_check_makes_source_not_due_until_interval_elapses(tmp_path):
+    store = make_store(tmp_path)
+
+    store.record_check("tax_profit_rate_ooo")
+
+    assert store.last_checked_at("tax_profit_rate_ooo") is not None
+    # Только что проверили — с интервалом хоть в 1 день ещё рано проверять снова.
+    assert store.is_due_for_check("tax_profit_rate_ooo", min_interval_days=1) is False
+
+
+def test_check_log_is_independent_per_source(tmp_path):
+    """Квартальный интервал для налоговых ставок и годовой для гражданского
+    права должны считаться независимо — проверка одного источника не
+    отмечает другой как проверенный."""
+    store = make_store(tmp_path)
+
+    store.record_check("tax_vat_rates")
+
+    assert store.is_due_for_check("tax_vat_rates", min_interval_days=90) is False
+    assert store.is_due_for_check("civil_law_gk_rf_art401", min_interval_days=365) is True
+
+
 def test_legislation_source_full_cycle(tmp_path):
     """Тот же протокол работает и для второго типа источника —
     законодательства (44-ФЗ), не только для базы расценок."""

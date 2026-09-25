@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .models import (
@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS pending_updates (
     decision_reason TEXT NOT NULL DEFAULT '',
     decided_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS check_log (
+    source_id TEXT PRIMARY KEY,
+    last_checked_at TEXT NOT NULL
+);
 """
 
 
@@ -94,6 +99,46 @@ class RegulatoryUpdateStore:
                     f"Источник {source_id!r} уже зарегистрирован с другим типом/названием: "
                     f"{row[0]!r}/{row[1]!r}, а не {source_type.value!r}/{source_name!r}"
                 )
+
+    # -- календарь проверок (не проверять чаще, чем нужно) -----------------
+
+    def record_check(self, source_id: str) -> None:
+        """Отмечает, что источник только что был проверен — вне зависимости
+        от того, нашлось ли обновление. Источник может быть ещё не
+        зарегистрирован (`register_source()`) на момент первой проверки —
+        `check_log` не ссылается на `sources`, чтобы не требовать порядка
+        вызовов."""
+        with closing(self._connect()) as conn:
+            conn.execute(
+                "INSERT INTO check_log (source_id, last_checked_at) VALUES (?, datetime('now')) "
+                "ON CONFLICT(source_id) DO UPDATE SET last_checked_at = excluded.last_checked_at",
+                (source_id,),
+            )
+            conn.commit()
+
+    def last_checked_at(self, source_id: str) -> datetime | None:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT last_checked_at FROM check_log WHERE source_id = ?", (source_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
+
+    def is_due_for_check(self, source_id: str, min_interval_days: int) -> bool:
+        """Источник, который никогда не проверялся, всегда due — календарь
+        отвечает только за то, чтобы не бить по источнику чаще нужного, не
+        за то, пропускать ли первую проверку. Законодательство и налоговые
+        ставки меняются редко (`legislation_watch.py`) — квартальный/годовой
+        интервал, не ежедневный, по аналогии с квартальным источником
+        Агента 4 (`smeta_estimator.version_watch`), у которого интервал
+        решает вызывающий скрипт по факту частоты запуска cron, здесь же —
+        сам календарь, потому что законодательство меняется ещё реже, чем
+        квартальные цены."""
+        last_checked = self.last_checked_at(source_id)
+        if last_checked is None:
+            return True
+        return datetime.now(timezone.utc) - last_checked >= timedelta(days=min_interval_days)
 
     # -- применённая версия --------------------------------------------------
 
