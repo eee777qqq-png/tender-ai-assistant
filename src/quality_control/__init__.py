@@ -12,6 +12,7 @@ from .discrepancy_log import (
     DiscrepancyEntry,
     DiscrepancyLog,
 )
+from .expert_review import ExpertReview, ExpertReviewStore, ReviewDecision
 
 __all__ = [
     "AuditReadinessRegistry",
@@ -24,4 +25,7 @@ __all__ = [
     "DiscrepancyCategory",
     "DiscrepancyEntry",
     "DiscrepancyLog",
+    "ExpertReview",
+    "ExpertReviewStore",
+    "ReviewDecision",
 ]
