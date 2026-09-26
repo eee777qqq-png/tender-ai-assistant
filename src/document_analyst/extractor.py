@@ -57,6 +57,29 @@ _EXPERIENCE_RE = re.compile(
     r"опыт[а-яё\s]{0,40}не менее\s*(\d+)\s*(?:лет|года|год)", re.IGNORECASE
 )
 
+# Структурированное поле «доп. требования к участникам закупки согласно
+# ч. 2/2.1 ст. 31 44-ФЗ (ПП РФ №2571)» — найдено 2026-09-26 на 5 реальных
+# приложениях «Требования к заявке», сформированных московской ЕАИСТ
+# («Единая автоматизированная информационная система торгов города Москвы»,
+# видно в подвале страницы каждого документа). Это ПЕРВИЧНЫЙ метод
+# извлечения (см. ниже, где он используется) — не эвристика по окну
+# символов, а размеченный шаблонный ответ «Не требуется» / «Требование
+# установлено. <текст>» прямо под понятным заголовком. Regex/`unclear`-скан
+# остаются fallback только для документов, где этого заголовка нет вовсе
+# (другой регион/старый шаблон — например, приложение с тендера кровли,
+# №0373100134626000473, было свободным текстом без этой разметки).
+#
+# Захватывает текст ПОСЛЕ двоеточия заголовка — до следующего такого же
+# заголовка (когда полей несколько, например 10.12.1 и 10.12.2) или до
+# `_STRUCTURED_VALUE_MAX_CHARS` символов, если следующего заголовка нет.
+_STRUCTURED_ADDITIONAL_REQUIREMENT_HEADING_RE = re.compile(
+    r"Дополнительны[а-яё]*\s+требовани[а-яё]*\s+к\s+участник[а-яё]*\s+закупки\s+согласно"
+    r"\s+ч\.?\s*2(?:\.\s?1)?\s*ст\.?\s*31[^:]{0,180}:",
+    re.IGNORECASE,
+)
+_STRUCTURED_NO_REQUIREMENT_RE = re.compile(r"^(?:не\s+требуется|не\s+установлен[а-яё]*)\b", re.IGNORECASE)
+_STRUCTURED_VALUE_MAX_CHARS = 800
+
 # Защитная сетка НАД _EXPERIENCE_RE (и любым другим будущим паттерном по
 # опыту) — не замена. Находка на реальном тендере №0373100134626000473
 # (2026-09-25/26, см. CLAUDE.md, открытый п.3): реальное требование к опыту
@@ -74,9 +97,19 @@ _NUMBER_NEARBY_RE = re.compile(
 # «20 процентов» оказалось около 285 символов (число лежит в отдельном
 # предложении/абзаце после перечисления «1) ... или 2) ...», см. заметку
 # выше) — со строгими 200 находка не сработала бы на собственном тестовом
-# примере задачи. Увеличено до 300 с запасом, проверено именно на этом
-# документе, не подобрано произвольно.
-_UNCLEAR_WINDOW_CHARS = 300
+# примере задачи. Увеличено до 300 в тот день, проверено именно на этом
+# документе.
+#
+# **2026-09-26: увеличено ещё раз, с 300 до 1000.** На реальном тендере
+# №0373200032226000750 (капремонт объекта ЖКХ) расстояние от «опыт» до
+# «20 процентов» оказалось 786 символов (перечисление «1) ... 2) ... 3) ...»
+# длиннее, чем в предыдущем документе) — с окном 300 находка была бы молча
+# пропущена, ни разу не дав даже `unclear`-сигнал (это подтверждено — так
+# и произошло на первом прогоне до расширения окна). Это ЗАПАСНАЯ страховка
+# — для этого конкретного документа реальным решением стало структурированное
+# поле выше (`_STRUCTURED_ADDITIONAL_REQUIREMENT_HEADING_RE`), не расширение
+# окна само по себе; окно расширено на случай документов без такого поля.
+_UNCLEAR_WINDOW_CHARS = 1000
 _PENALTY_RATE_RE = re.compile(
     r"штраф[а-яё\s]{0,20}размере\s*(\d+(?:[.,]\d+)?)\s*%[^\n]{0,30}за каждый день",
     re.IGNORECASE,
@@ -196,11 +229,62 @@ def _scan_unclear_experience(document_text: str) -> list[ParticipantRequirement]
     return found
 
 
+def _extract_structured_additional_requirements(document_text: str) -> list[ParticipantRequirement] | None:
+    """Первичный метод извлечения доп. требований к участнику — см. заметку
+    у `_STRUCTURED_ADDITIONAL_REQUIREMENT_HEADING_RE` выше.
+
+    Возвращает `None`, если в документе нет ни одного такого заголовка —
+    сигнал вызывающему коду, что нужно использовать fallback
+    (`_EXPERIENCE_RE`/`_SRO_RE`/`_scan_unclear_experience`), а не то, что
+    требований нет. Возвращает `[]` (пустой список, не `None`), если
+    заголовок(и) есть, но каждый явно говорит «не требуется»/«не
+    установлено» — это структурированный честный ноль, fallback не нужен."""
+    headings = list(_STRUCTURED_ADDITIONAL_REQUIREMENT_HEADING_RE.finditer(document_text))
+    if not headings:
+        return None
+
+    found: list[ParticipantRequirement] = []
+    for i, heading in enumerate(headings):
+        value_start = heading.end()
+        next_heading_start = headings[i + 1].start() if i + 1 < len(headings) else len(document_text)
+        value_end = min(next_heading_start, value_start + _STRUCTURED_VALUE_MAX_CHARS)
+        value = " ".join(document_text[value_start:value_end].split())
+        if not value or _STRUCTURED_NO_REQUIREMENT_RE.match(value):
+            continue
+
+        kind = "sro" if _SRO_RE.search(value) else "experience"
+        found.append(
+            ParticipantRequirement(
+                description=(
+                    "Найдено структурированное поле «доп. требования к участникам закупки "
+                    "согласно ч. 2 ст. 31 44-ФЗ» со значением, отличным от «не требуется» — "
+                    f"требует ручной проверки экспертом: {value[:300]}"
+                ),
+                kind=kind,
+                raw_text=value,
+            )
+        )
+    return found
+
+
 def extract_requirements(tender_purchase_number: str, document_text: str) -> ExtractedRequirements:
     timeline = SubmissionTimeline()
     security_requirements: list[SecurityRequirement] = []
-    participant_requirements: list[ParticipantRequirement] = []
     hidden_risks: list[HiddenRisk] = []
+
+    # Первичный метод: структурированное поле «...согласно ч. 2 ст. 31...»
+    # (см. заметку у `_STRUCTURED_ADDITIONAL_REQUIREMENT_HEADING_RE`). Если
+    # оно есть в документе — используем ТОЛЬКО его для требований к
+    # участнику (СРО/опыт), regex-скан по предложениям и `unclear`-защитная
+    # сетка ниже для этого документа не запускаются (не дублируем и не
+    # противоречим размеченному ответу шаблона). Если поля нет вовсе —
+    # `structured_participant_requirements is None`, и ниже используется
+    # прежний эвристический путь как fallback.
+    structured_participant_requirements = _extract_structured_additional_requirements(document_text)
+    use_structured = structured_participant_requirements is not None
+    participant_requirements: list[ParticipantRequirement] = (
+        list(structured_participant_requirements) if use_structured else []
+    )
 
     for sentence in _sentences(document_text):
         m = _SUBMISSION_DEADLINE_RE.search(sentence)
@@ -236,14 +320,14 @@ def extract_requirements(tender_purchase_number: str, document_text: str) -> Ext
                 )
             )
 
-        if _SRO_RE.search(sentence):
+        if not use_structured and _SRO_RE.search(sentence):
             participant_requirements.append(
                 ParticipantRequirement(
                     description="Требуется членство в СРО", kind="sro", raw_text=sentence
                 )
             )
 
-        m = _EXPERIENCE_RE.search(sentence)
+        m = None if use_structured else _EXPERIENCE_RE.search(sentence)
         if m:
             years = int(m.group(1))
             participant_requirements.append(
@@ -258,7 +342,8 @@ def extract_requirements(tender_purchase_number: str, document_text: str) -> Ext
 
         hidden_risks.extend(_scan_hidden_risks(sentence))
 
-    participant_requirements.extend(_scan_unclear_experience(document_text))
+    if not use_structured:
+        participant_requirements.extend(_scan_unclear_experience(document_text))
 
     return ExtractedRequirements(
         tender_purchase_number=tender_purchase_number,

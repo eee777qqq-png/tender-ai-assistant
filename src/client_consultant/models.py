@@ -59,4 +59,14 @@ class ClientSummary:
     # см. build_client_summary()), не то же самое, что «маржа не посчитана»
     # (это ProfitabilitySummary.margin=None при подключённом Агенте 5).
     profitability: ProfitabilitySummary | None = None
+    # Найдено 2026-09-26 на реальном тендере №0373200032226000750: Агент 2
+    # сказал «ПОДХОДИТ» (requires_sro/min_experience_years у Tender —
+    # честная заглушка False/0, см. CLAUDE.md п.9), но Агент 3 нашёл в
+    # тексте документации реальное требование к опыту, которое профиль
+    # клиента не подтверждает (пустой completed_contracts). Без этого поля
+    # такое противоречие тихо терялось — сводка показывала «ПОДХОДИТ» и
+    # «рисков не найдено» одновременно. Пусто, если противоречий нет или
+    # `extracted_requirements`/`client_profile` не переданы в
+    # `build_client_summary()` (оба входа необязательны, см. там же).
+    unresolved_participant_requirements: list[str] = field(default_factory=list)
     decision_reminder: str = ""

@@ -35,9 +35,10 @@ from __future__ import annotations
 
 from classifier.matching import MatchResult
 from completeness_check.models import CompletenessResult
-from document_analyst.models import HiddenRisk, RiskCategory
+from document_analyst.models import ExtractedRequirements, HiddenRisk, RiskCategory
 from document_assembler.models import DocumentPackage
 from legal_boundaries import CLIENT_SUMMARY_LEGAL_NOTICE
+from onboarding.models import ClientProfile
 from profitability_estimator.models import ProfitabilityEstimate
 
 from .models import ClientSummary, MissingDocumentItem, PlainRisk, ProfitabilitySummary
@@ -164,11 +165,68 @@ def _translate_profitability(profitability: ProfitabilityEstimate) -> Profitabil
     )
 
 
+# Виды находок Агента 3, которые в принципе способны противоречить
+# формальному «ПОДХОДИТ» Агента 2 — не любой `ParticipantRequirement.kind`
+# (например, "other" сюда не входит, для него нет понятного способа
+# сверить с профилем).
+_CONTRADICTION_CHECKED_KINDS = ("sro", "experience", "unclear")
+
+
+def _find_unresolved_participant_requirements(
+    extracted: ExtractedRequirements, profile: ClientProfile
+) -> list[str]:
+    """Минимальная (не архитектурная) версия связи Агент 3 -> Агент 2,
+    добавленная 2026-09-26 по прямому запросу владельца после того, как на
+    реальном тендере №0373200032226000750 обнаружилось: Агент 2 показал
+    «ПОДХОДИТ» (у `Tender` `requires_sro`/`min_experience_years` — честная
+    заглушка False/0, не из документации, см. CLAUDE.md п.9), а Агент 3
+    нашёл в тексте реальное требование к опыту (структурированное поле
+    ЕАИСТ «согласно ч. 2 ст. 31... 20% НМЦК»), которое профиль клиента
+    (`completed_contracts=[]`) не подтверждает — сводка Агента 8 при этом
+    молча показывала «0 рисков», противоречие терялось.
+
+    **Это не переработка на два прохода классификации**, которую предложил
+    владелец как полноценное архитектурное решение (coarse-фильтр Агента 2
+    до скачивания документов + финальная проверка после Агента 3,
+    заменяющая исход первого прохода) — это точечная проверка на уровне
+    Агента 8, показывающая противоречие явным текстом клиенту, а не
+    предотвращающая его на уровне матчинга. Полная переработка — отдельная,
+    более крупная задача, см. CLAUDE.md.
+
+    Проверяет только 3 вида находок (`_CONTRADICTION_CHECKED_KINDS`) —
+    ровно те, для которых есть понятный способ сверки с профилем:
+    `kind="sro"` -> `profile.permits_experience.sro_membership`;
+    `kind="experience"`/`"unclear"` -> `profile.permits_experience.completed_contracts`
+    (не `years_of_experience` — находки этого типа по формулировке всегда
+    про подтверждённый ИСПОЛНЕННЫЙ аналогичный контракт, не про стаж как
+    таковой, поэтому сверяем именно со справками об исполненных контрактах)."""
+    warnings: list[str] = []
+    has_completed_contract = bool(profile.permits_experience.completed_contracts)
+    has_sro = profile.permits_experience.sro_membership
+
+    for req in extracted.participant_requirements:
+        if req.kind not in _CONTRADICTION_CHECKED_KINDS:
+            continue
+        if req.kind == "sro" and has_sro:
+            continue
+        if req.kind in ("experience", "unclear") and has_completed_contract:
+            continue
+        warnings.append(
+            "Агент 2 формально показал «ПОДХОДИТ», но Агент 3 нашёл в документации "
+            f"требование к участнику, которое профиль пока не подтверждает: {req.description} "
+            f"Цитата: «{req.raw_text[:200]}» — требуется ручная проверка, прежде чем "
+            "полагаться на «ПОДХОДИТ»."
+        )
+    return warnings
+
+
 def build_client_summary(
     match: MatchResult,
     completeness: CompletenessResult,
     package: DocumentPackage,
     profitability: ProfitabilityEstimate | None = None,
+    extracted_requirements: ExtractedRequirements | None = None,
+    client_profile: ClientProfile | None = None,
 ) -> ClientSummary:
     if not (
         match.tender.purchase_number == completeness.tender_purchase_number == package.tender_purchase_number
@@ -196,6 +254,17 @@ def build_client_summary(
                 f"Оценка выгоды Агента 5 относится к другому клиенту: "
                 f"выгода={profitability.client_id!r}, матчинг={match.client_id!r}"
             )
+    if extracted_requirements is not None and extracted_requirements.tender_purchase_number != match.tender.purchase_number:
+        raise ValueError(
+            "Требования Агента 3 относятся к другой закупке: "
+            f"агент 3={extracted_requirements.tender_purchase_number!r}, "
+            f"матчинг={match.tender.purchase_number!r}"
+        )
+    if client_profile is not None and client_profile.client_id != match.client_id:
+        raise ValueError(
+            f"Переданный профиль относится к другому клиенту: "
+            f"профиль={client_profile.client_id!r}, матчинг={match.client_id!r}"
+        )
 
     if match.is_match:
         tender_fit_explanation = f"Закупка «{match.tender.name}» подходит компании — все условия участия выполняются."
@@ -216,6 +285,12 @@ def build_client_summary(
     risks = [_translate_risk(r) for r in package.hidden_risks]
     profitability_summary = _translate_profitability(profitability) if profitability is not None else None
 
+    unresolved_participant_requirements = (
+        _find_unresolved_participant_requirements(extracted_requirements, client_profile)
+        if extracted_requirements is not None and client_profile is not None
+        else []
+    )
+
     return ClientSummary(
         client_id=match.client_id,
         tender_purchase_number=match.tender.purchase_number,
@@ -227,6 +302,7 @@ def build_client_summary(
         missing_documents=missing_documents,
         risks=risks,
         profitability=profitability_summary,
+        unresolved_participant_requirements=unresolved_participant_requirements,
         decision_reminder=DECISION_REMINDER,
     )
 
@@ -238,6 +314,10 @@ def render_summary_text(summary: ClientSummary) -> str:
     lines.append(f"Закупка: {summary.tender_name} ({summary.tender_purchase_number})")
     lines.append("")
     lines.append(f"1. Подходит ли закупка: {summary.tender_fit_explanation}")
+    if summary.unresolved_participant_requirements:
+        lines.append("   ⚠ ПРОТИВОРЕЧИЕ, ТРЕБУЕТСЯ РУЧНАЯ ПРОВЕРКА:")
+        for w in summary.unresolved_participant_requirements:
+            lines.append(f"   - {w}")
     lines.append(f"2. Готовность документов: {summary.package_status_explanation}")
 
     if summary.profitability is not None:
