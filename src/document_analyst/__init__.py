@@ -8,6 +8,7 @@ from .models import (
     SecurityRequirement,
     SubmissionTimeline,
 )
+from .pdf_reader import extract_text_from_pdf
 from .review import review_document_analysis
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "SubmissionTimeline",
     "extract_requirements",
     "extract_text_from_docx",
+    "extract_text_from_pdf",
     "review_document_analysis",
 ]

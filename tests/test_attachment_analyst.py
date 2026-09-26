@@ -14,6 +14,7 @@ from docx import Document
 from eis_client.attachment_analyst import fetch_participant_requirements
 from eis_client.client import EISClient
 from eis_client.config import EISConfig
+from test_pdf_reader import _build_pdf
 
 NOTICE_WITH_APPLICATION_REQUIREMENTS = """<export>
   <epNotificationEF2020>
@@ -41,6 +42,42 @@ NOTICE_WITHOUT_APPLICATION_REQUIREMENTS = """<export>
         <docKindInfo>
           <code>POD</code>
           <name>Описание объекта закупки</name>
+        </docKindInfo>
+      </attachmentInfo>
+    </attachmentsInfo>
+  </epNotificationEF2020>
+</export>""".encode("utf-8")
+
+# 35 из 63 реальных приложений CAR — .pdf, не .docx (см. CLAUDE.md,
+# открытый п.3) — например "ElectronicAuction14963129.pdf" на реальном
+# тендере №0373200033926000018.
+NOTICE_WITH_PDF_APPLICATION_REQUIREMENTS = """<export>
+  <epNotificationEF2020>
+    <attachmentsInfo>
+      <attachmentInfo>
+        <fileName>ElectronicAuction14963129.pdf</fileName>
+        <fileSize>123</fileSize>
+        <url>https://example.invalid/44fz/filestore/public/1.0/download/priz/file.html?uid=EXAMPLE-CAR-PDF</url>
+        <docKindInfo>
+          <code>CAR</code>
+          <name>Требование к содержанию, составу заявки на участие в закупке</name>
+        </docKindInfo>
+      </attachmentInfo>
+    </attachmentsInfo>
+  </epNotificationEF2020>
+</export>""".encode("utf-8")
+
+# Формат, для которого нет читателя текста — честная ошибка, не тихий сбой.
+NOTICE_WITH_UNSUPPORTED_FORMAT = """<export>
+  <epNotificationEF2020>
+    <attachmentsInfo>
+      <attachmentInfo>
+        <fileName>Prilozhenie_3_staroe.doc</fileName>
+        <fileSize>123</fileSize>
+        <url>https://example.invalid/44fz/filestore/public/1.0/download/priz/file.html?uid=EXAMPLE-CAR-DOC</url>
+        <docKindInfo>
+          <code>CAR</code>
+          <name>Требование к содержанию, составу заявки на участие в закупке</name>
         </docKindInfo>
       </attachmentInfo>
     </attachmentsInfo>
@@ -120,3 +157,38 @@ def test_fetch_participant_requirements_honestly_returns_empty_lists_when_format
 
     assert result is not None
     assert result.participant_requirements == []
+
+
+def test_fetch_participant_requirements_reads_pdf_attachment():
+    """56% реальных приложений CAR — .pdf, не .docx (см. CLAUDE.md, п.3) —
+    мост должен читать оба формата, не только .docx."""
+    pdf_bytes = _build_pdf(
+        ["Participant must have experience of similar work for at least 3 years."]
+    )
+    with patch("requests.Session.get") as mock_get:
+        mock_get.return_value.content = pdf_bytes
+        mock_get.return_value.raise_for_status = lambda: None
+
+        client = EISClient(make_ip_config())
+        result = fetch_participant_requirements(
+            client, NOTICE_WITH_PDF_APPLICATION_REQUIREMENTS, "0373200033926000018"
+        )
+
+    assert result is not None
+    # Штатный _EXPERIENCE_RE рассчитан на русский текст — здесь важно только
+    # то, что PDF прочитался и дошёл до extract_requirements() без падения,
+    # не конкретное распознанное требование.
+    assert result.tender_purchase_number == "0373200033926000018"
+
+
+def test_fetch_participant_requirements_raises_on_unsupported_attachment_format():
+    with patch("requests.Session.get") as mock_get:
+        mock_get.return_value.content = b"not a real file"
+        mock_get.return_value.raise_for_status = lambda: None
+
+        client = EISClient(make_ip_config())
+        try:
+            fetch_participant_requirements(client, NOTICE_WITH_UNSUPPORTED_FORMAT, "x")
+            assert False, "ожидался ValueError"
+        except ValueError as exc:
+            assert ".doc" in str(exc)
