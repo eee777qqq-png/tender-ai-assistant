@@ -14,7 +14,9 @@ import pytest
 from classifier.tender import Tender
 from document_analyst.models import SecurityRequirement
 from eis_client.notice_parser import (
+    APPLICATION_REQUIREMENTS_DOC_KIND_CODE,
     NoticeSecurityAmounts,
+    extract_attachments,
     extract_customer_name,
     extract_max_price,
     extract_name,
@@ -23,6 +25,7 @@ from eis_client.notice_parser import (
     extract_region_code,
     extract_security_amounts,
     extract_submission_deadline,
+    find_attachment_by_doc_kind,
     notice_document_to_tender,
     security_amounts_to_requirements,
 )
@@ -303,3 +306,72 @@ def test_notice_document_to_tender_rejects_missing_submission_deadline():
 def test_notice_document_to_tender_rejects_unparseable_xml():
     with pytest.raises(ValueError, match="XML"):
         notice_document_to_tender(b"not xml", requires_sro=False, min_experience_years=0)
+
+
+# Форма — по реальному извещению №0373100134626000473, 2026-09-25/26 (см.
+# CLAUDE.md, «Известные пробелы», п.3/10): 2 приложения из реальных 4,
+# fileName/url/docKindInfo — как в настоящем документе (сами значения url
+# заменены на example.invalid, не настоящий uid). cryptoSigns намеренно
+# опущен — extract_attachments() его не читает.
+ATTACHMENTS_NOTICE = """<export>
+  <epNotificationEF2020>
+    <attachmentsInfo>
+      <attachmentInfo>
+        <publishedContentId>EXAMPLE-CONTRACT-DRAFT</publishedContentId>
+        <fileName>Prilozhenie_4_Proekt_kontrakta.docx</fileName>
+        <fileSize>658241</fileSize>
+        <url>https://example.invalid/44fz/filestore/public/1.0/download/priz/file.html?uid=EXAMPLE-CP</url>
+        <docKindInfo>
+          <code>CP</code>
+          <name>Проект контракта</name>
+        </docKindInfo>
+      </attachmentInfo>
+      <attachmentInfo>
+        <publishedContentId>EXAMPLE-APPLICATION-REQUIREMENTS</publishedContentId>
+        <fileName>Prilozhenie_3_Trebovaniya_k_zayavke.docx</fileName>
+        <fileSize>50857</fileSize>
+        <url>https://example.invalid/44fz/filestore/public/1.0/download/priz/file.html?uid=EXAMPLE-CAR</url>
+        <docKindInfo>
+          <code>CAR</code>
+          <name>Требование к содержанию, составу заявки на участие в закупке</name>
+        </docKindInfo>
+      </attachmentInfo>
+    </attachmentsInfo>
+  </epNotificationEF2020>
+</export>""".encode("utf-8")
+
+
+def test_extract_attachments_parses_all_fields():
+    attachments = extract_attachments(ATTACHMENTS_NOTICE)
+    assert len(attachments) == 2
+
+    contract_draft, application_requirements = attachments
+    assert contract_draft.file_name == "Prilozhenie_4_Proekt_kontrakta.docx"
+    assert contract_draft.file_size == 658241
+    assert contract_draft.doc_kind_code == "CP"
+    assert contract_draft.doc_kind_name == "Проект контракта"
+    assert contract_draft.url.endswith("uid=EXAMPLE-CP")
+
+    assert application_requirements.doc_kind_code == "CAR"
+    assert application_requirements.file_size == 50857
+
+
+def test_extract_attachments_empty_when_no_attachments_info():
+    xml = b"<export><epNotificationEF2020><commonInfo/></epNotificationEF2020></export>"
+    assert extract_attachments(xml) == []
+
+
+def test_extract_attachments_empty_on_unparseable_xml():
+    assert extract_attachments(b"not xml") == []
+
+
+def test_find_attachment_by_doc_kind_matches_application_requirements():
+    attachments = extract_attachments(ATTACHMENTS_NOTICE)
+    found = find_attachment_by_doc_kind(attachments, APPLICATION_REQUIREMENTS_DOC_KIND_CODE)
+    assert found is not None
+    assert found.file_name == "Prilozhenie_3_Trebovaniya_k_zayavke.docx"
+
+
+def test_find_attachment_by_doc_kind_none_when_absent():
+    attachments = extract_attachments(ATTACHMENTS_NOTICE)
+    assert find_attachment_by_doc_kind(attachments, "MRJ") is None

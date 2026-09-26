@@ -7,6 +7,8 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from classifier import ConstructionClassifier
@@ -266,6 +268,52 @@ def test_legal_entity_archive_download_has_no_token_header(tmp_path):
         EISClient(make_config(tmp_path)).download_archive("https://example.invalid/a.zip")
 
     assert mock_get.call_args.kwargs["headers"] == {}
+
+
+def test_download_attachment_sends_browser_user_agent_not_token():
+    """Найдено вживую Edwin, 2026-09-26: приложения качаются User-Agent'ом
+    браузера, не individualPerson_token (другой сервис, не архивы)."""
+    url = "https://zakupki.gov.ru/44fz/filestore/public/1.0/download/priz/file.html?uid=abc"
+    with patch("requests.Session.get") as mock_get:
+        mock_get.return_value = MagicMock(content=b"docx-bytes", raise_for_status=lambda: None)
+        content = EISClient(make_ip_config()).download_attachment(url)
+
+    assert content == b"docx-bytes"
+    assert mock_get.call_args.args[0] == url
+    headers = mock_get.call_args.kwargs["headers"]
+    assert "individualPerson_token" not in headers
+    assert "Chrome" in headers["User-Agent"]
+
+
+def test_download_attachment_raises_eis_request_error_on_failure():
+    import requests
+
+    with patch("requests.Session.get", side_effect=requests.RequestException("boom")):
+        try:
+            EISClient(make_ip_config()).download_attachment("https://example.invalid/x.docx")
+            assert False, "ожидалась EISRequestError"
+        except EISRequestError:
+            pass
+
+
+def test_download_attachment_respects_rate_limit(monkeypatch):
+    """Не чаще ~8 запросов/сек между последовательными вызовами на одном клиенте."""
+    from eis_client import client as client_module
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(client_module.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    ticks = iter([100.0, 100.05, 100.05])  # старт, между вызовами прошло 0.05с (< 0.125с лимита)
+    monkeypatch.setattr(client_module.time, "monotonic", lambda: next(ticks))
+
+    with patch("requests.Session.get") as mock_get:
+        mock_get.return_value = MagicMock(content=b"a", raise_for_status=lambda: None)
+        client = EISClient(make_ip_config())
+        client.download_attachment("https://example.invalid/1.docx")
+        client.download_attachment("https://example.invalid/2.docx")
+
+    assert len(sleeps) == 1
+    assert sleeps[0] == pytest.approx(client_module._ATTACHMENT_MIN_INTERVAL_SECONDS - 0.05)
 
 
 def test_raw_archives_saved_and_unparsed_xml_counted(tmp_path, caplog):

@@ -128,6 +128,33 @@ _MAX_PRICE_PATH_SUFFIX = ("maxpriceinfo", "maxprice")
 # только дату, тем же `_DATE_PREFIX_RE`, что и для publish_date).
 _SUBMISSION_DEADLINE_PATH_SUFFIX = ("collectinginfo", "enddt")
 
+# Приложения извещения (техзадание/проект контракта/требования к заявке и
+# т. п.) — attachmentsInfo/attachmentInfo, подтверждено на реальном
+# извещении №0373100134626000473, 2026-09-25 (см. CLAUDE.md, «Известные
+# пробелы», п.10 и п.3). У каждого attachmentInfo — fileName, fileSize,
+# url (публичный, `zakupki.gov.ru/44fz/filestore/...`, не тот же сервис,
+# что архивы) и docKindInfo/code — машиночитаемый тип документа (не текст
+# названия файла, который произволен от заказчика к заказчику). Коды,
+# подтверждённые на этом одном документе: MRJ — обоснование НМЦК, CP —
+# проект контракта, POD — описание объекта закупки, CAR — требование к
+# содержанию/составу заявки (это и есть источник требований к участнику —
+# СРО/опыт — для Агента 3). Стабильность этих кодов на ДРУГИХ извещениях
+# не проверена (один документ — не статистика), но код по смыслу — часть
+# официального справочника видов документов ЕИС, надёжнее, чем парсинг
+# по названию файла (то произвольный текст от заказчика).
+_ATTACHMENT_PATH = ("attachmentsinfo", "attachmentinfo")
+_FILE_NAME_TAG = "filename"
+_FILE_SIZE_TAG = "filesize"
+_URL_TAG = "url"
+_DOC_KIND_INFO_TAG = "dockindinfo"
+_DOC_KIND_CODE_TAG = "code"
+_DOC_KIND_NAME_TAG = "name"
+
+# Требование к содержанию/составу заявки — тот вид документа, где на
+# реальном извещении нашлось требование к опыту участника (см. CLAUDE.md,
+# открытый п.3, находка 2026-09-25/26).
+APPLICATION_REQUIREMENTS_DOC_KIND_CODE = "CAR"
+
 
 def _local(tag: str) -> str:
     return tag.split("}", 1)[-1] if "}" in tag else tag
@@ -226,6 +253,86 @@ def extract_security_amounts(xml_bytes: bytes) -> NoticeSecurityAmounts:
         warranty_amount=_find_number(root, _PROVISION_WARRANTY_AMOUNT_SUFFIX),
         warranty_percentage=_find_number(root, _PROVISION_WARRANTY_PART_SUFFIX),
     )
+
+
+@dataclass
+class NoticeAttachment:
+    """Одно приложение извещения (файл + его тип по справочнику ЕИС).
+
+    `url` — публичная ссылка на скачивание (`zakupki.gov.ru/44fz/filestore/...`),
+    не тот сервис, что архивы (`int.zakupki.gov.ru/dstore/...`) — качается
+    `EISClient.download_attachment()`, не `download_archive()`."""
+
+    file_name: str
+    file_size: int | None
+    url: str
+    doc_kind_code: str | None
+    doc_kind_name: str | None
+
+
+def extract_attachments(xml_bytes: bytes) -> list[NoticeAttachment]:
+    """Список приложений извещения — см. `NoticeAttachment` и заметку про
+    `_ATTACHMENT_PATH`/коды `docKindInfo` выше. Пустой список, если приложений
+    нет или документ не разбирается — честно, не ошибка."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return []
+
+    attachments: list[NoticeAttachment] = []
+
+    def walk(el: ET.Element) -> None:
+        if _local(el.tag) == "attachmentInfo":
+            attachments.append(_parse_attachment(el))
+            return  # attachmentInfo не бывает вложен сам в себя
+        for child in el:
+            walk(child)
+
+    walk(root)
+    return attachments
+
+
+def _parse_attachment(el: ET.Element) -> NoticeAttachment:
+    file_name = ""
+    file_size: int | None = None
+    url = ""
+    doc_kind_code: str | None = None
+    doc_kind_name: str | None = None
+
+    for child in el:
+        tag = _local(child.tag)
+        if tag == "fileName":
+            file_name = (child.text or "").strip()
+        elif tag == "fileSize":
+            raw = (child.text or "").strip()
+            file_size = int(raw) if raw.isdigit() else None
+        elif tag == "url":
+            url = (child.text or "").strip()
+        elif tag == "docKindInfo":
+            for grandchild in child:
+                gtag = _local(grandchild.tag)
+                if gtag == "code":
+                    doc_kind_code = (grandchild.text or "").strip() or None
+                elif gtag == "name":
+                    doc_kind_name = (grandchild.text or "").strip() or None
+        # cryptoSigns и прочее — сознательно игнорируется, не нужно Агенту 3
+
+    return NoticeAttachment(
+        file_name=file_name,
+        file_size=file_size,
+        url=url,
+        doc_kind_code=doc_kind_code,
+        doc_kind_name=doc_kind_name,
+    )
+
+
+def find_attachment_by_doc_kind(
+    attachments: list[NoticeAttachment], doc_kind_code: str
+) -> NoticeAttachment | None:
+    """Первое приложение с точным совпадением `doc_kind_code` (например,
+    `APPLICATION_REQUIREMENTS_DOC_KIND_CODE`). `None`, если такого нет —
+    честно, а не первое попавшееся приложение наугад."""
+    return next((a for a in attachments if a.doc_kind_code == doc_kind_code), None)
 
 
 def extract_purchase_number(xml_bytes: bytes) -> str | None:

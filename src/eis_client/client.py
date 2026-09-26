@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import re
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -19,6 +20,31 @@ from .soap_response import extract_archive_urls
 from .tls import combined_ca_bundle_path
 
 logger = logging.getLogger(__name__)
+
+# Найдено вживую Edwin, 2026-09-26: скачивание приложений извещения
+# (attachmentsInfo/attachmentInfo/url, https://zakupki.gov.ru/44fz/filestore/...)
+# 404-ило не из-за авторизации (ЕСИА-сессия НЕ нужна вообще — проверено
+# независимо ещё раз в этой сессии, не только со слов Edwin), а из-за
+# защиты от ботов по заголовку User-Agent: без него — честный 404 от той
+# же настоящей инфраструктуры ЕИС (см. CLAUDE.md, «Известные пробелы»,
+# п.10 — там же ошибочная гипотеза про ЕСИА, оставлена для истории), с
+# обычным браузерным User-Agent — 200 и настоящий файл (проверено: размер
+# ответа побайтово совпал с `fileSize` из XML извещения). Не тот же
+# механизм, что `_download_auth_headers()`/`individualPerson_token` —
+# тот нужен для архивов (`int.zakupki.gov.ru/dstore/...`), это — для
+# приложений на публичном портале (`zakupki.gov.ru/44fz/filestore/...`),
+# два разных сервиса на одном доменном семействе.
+_ATTACHMENT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+# Эмпирический безопасный темп запросов к этому сайту (не из официальной
+# инструкции — та описывает только SOAP/dstore API, не публичный портал) —
+# не чаще 8 запросов в секунду. Выдерживается между ПОСЛЕДОВАТЕЛЬНЫМИ
+# вызовами `download_attachment()` на одном клиенте, не глобально на
+# процесс — двух параллельных `EISClient` этот лимит не свяжет.
+_ATTACHMENT_MIN_INTERVAL_SECONDS = 1.0 / 8
 
 # До 2026-09-23 искали только по ИМЕНИ тега (что-то похожее на "okpd") — не
 # нашли НИ ОДНОГО кода ни в одном из 1640 реальных документов ЕИС (запрос
@@ -98,6 +124,7 @@ class EISClient:
         self._session = self._build_session()
         self._classifier = construction_classifier
         self._raw_archive_dir = Path(raw_archive_dir) if raw_archive_dir else None
+        self._last_attachment_request_at: float | None = None
 
     def _build_session(self) -> requests.Session:
         session = requests.Session()
@@ -132,6 +159,38 @@ class EISClient:
             response.raise_for_status()
         except requests.RequestException as exc:
             raise EISRequestError(f"Не удалось скачать архив {archive_url}: {exc}") from exc
+        return response.content
+
+    def download_attachment(self, url: str) -> bytes:
+        """Скачивает приложение извещения (техзадание/проект контракта/
+        требования к заявке и т. п.) с публичного портала `zakupki.gov.ru`
+        (`attachmentsInfo/attachmentInfo/url` в XML извещения — см.
+        `notice_parser.extract_attachments()`).
+
+        **Не то же самое, что `download_archive()`** — другой сервис (публичный
+        веб-портал, не API `int.zakupki.gov.ru`), другой способ доступа:
+        не токен в заголовке, а обычный браузерный `User-Agent` (см. модульную
+        заметку выше про находку Edwin, 2026-09-26 — защита от ботов, не
+        авторизация; ЕСИА-сессия не нужна, подтверждено независимо).
+
+        Выдерживает `_ATTACHMENT_MIN_INTERVAL_SECONDS` между последовательными
+        вызовами на этом клиенте — простая защита от превышения безопасного
+        темпа запросов при скачивании нескольких приложений подряд."""
+        if self._last_attachment_request_at is not None:
+            elapsed = time.monotonic() - self._last_attachment_request_at
+            wait = _ATTACHMENT_MIN_INTERVAL_SECONDS - elapsed
+            if wait > 0:
+                time.sleep(wait)
+
+        try:
+            response = self._session.get(
+                url, headers={"User-Agent": _ATTACHMENT_USER_AGENT}, timeout=self.config.timeout
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise EISRequestError(f"Не удалось скачать приложение {url}: {exc}") from exc
+        finally:
+            self._last_attachment_request_at = time.monotonic()
         return response.content
 
     def _download_auth_headers(self) -> dict[str, str]:

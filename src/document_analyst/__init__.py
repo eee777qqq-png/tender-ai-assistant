@@ -1,3 +1,4 @@
+from .docx_reader import extract_text_from_docx
 from .extractor import AGENT_NAME, extract_requirements
 from .models import (
     ExtractedRequirements,
@@ -18,5 +19,6 @@ __all__ = [
     "SecurityRequirement",
     "SubmissionTimeline",
     "extract_requirements",
+    "extract_text_from_docx",
     "review_document_analysis",
 ]
