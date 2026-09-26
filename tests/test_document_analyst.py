@@ -81,6 +81,64 @@ def test_plaster_document_has_no_hidden_risks():
     assert any("не менее 1 лет" in d for d in descriptions)
 
 
+def test_unclear_experience_flagged_on_real_shaped_percent_of_price_format():
+    """Реальная находка на тендере №0373100134626000473 (2026-09-25/26,
+    CLAUDE.md открытый п.3): требование к опыту сформулировано как «опыт ...
+    цена которого не менее 20% НМЦК», не «не менее N лет» — `_EXPERIENCE_RE`
+    молчит, защитная сетка (`_scan_unclear_experience`) должна поймать это
+    как `kind="unclear"`, а не тихий пустой список."""
+    text = (
+        "Наличие у участника закупки одного из следующих видов опыта выполнения работ: "
+        "1) опыт исполнения договора, предусматривающего выполнение работ по текущему "
+        "ремонту зданий, сооружений; или 2) опыт исполнения договора, предусматривающего "
+        "выполнение работ по строительству, реконструкции, капитальному ремонту объекта "
+        "капитального строительства. Цена выполненных работ по договору, предусмотренному "
+        "пунктом 1) или 2), должна составлять не менее 20 процентов начальной "
+        "(максимальной) цены контракта, заключаемого по результатам определения поставщика."
+    )
+    result = extract_requirements("0373100134626000473", text)
+
+    unclear = [r for r in result.participant_requirements if r.kind == "unclear"]
+    assert len(unclear) == 1
+    assert "не распознана автоматически" in unclear[0].description
+    assert "опыт" in unclear[0].raw_text
+    assert "20 процентов" in unclear[0].raw_text
+
+
+def test_unclear_experience_deduplicated_across_repeated_opyt_mentions():
+    """Три упоминания «опыт»/«опыта» рядом с одним и тем же числом (типичное
+    перечисление «1) ... или 2) ...») не должны дать три одинаковые находки —
+    покрыто и предыдущим тестом (len == 1), здесь — явная проверка на
+    искусственном тексте с более выраженным повтором."""
+    text = (
+        "Опыт, опыт и ещё раз опыт участника учитывается. "
+        "Цена контракта, подтверждающего такой опыт, должна составлять не менее 30 процентов НМЦК."
+    )
+    result = extract_requirements("x", text)
+    unclear = [r for r in result.participant_requirements if r.kind == "unclear"]
+    assert len(unclear) == 1
+
+
+def test_no_unclear_when_standard_experience_pattern_already_matched():
+    """На уже распознанном тексте (`SAMPLE_DOCUMENT_KROVLYA` — «опыт ... не
+    менее 2 лет») защитная сетка не должна дублировать штатную находку."""
+    result = extract_requirements("0173200001426000101", SAMPLE_DOCUMENT_KROVLYA)
+    assert all(r.kind != "unclear" for r in result.participant_requirements)
+    assert any(r.kind == "experience" for r in result.participant_requirements)
+
+
+def test_no_unclear_when_no_number_anywhere_near_opyt():
+    text = "Участник должен иметь большой опыт в строительной отрасли."
+    result = extract_requirements("x", text)
+    assert result.participant_requirements == []
+
+
+def test_no_unclear_when_opyt_word_absent():
+    text = "Срок подачи заявок: до 01.10.2026 (мск)."
+    result = extract_requirements("x", text)
+    assert result.participant_requirements == []
+
+
 def test_reuses_shared_audit_readiness_logic_agreed_for_agent_4():
     """Та же логика, что для Агента 4: окно из 50 проверок, переход на
     выборочный аудит только при >=90% без существенной корректировки и без

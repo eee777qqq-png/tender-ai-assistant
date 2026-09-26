@@ -56,6 +56,27 @@ _SRO_RE = re.compile(r"\bСРО\b|саморегулируем", re.IGNORECASE)
 _EXPERIENCE_RE = re.compile(
     r"опыт[а-яё\s]{0,40}не менее\s*(\d+)\s*(?:лет|года|год)", re.IGNORECASE
 )
+
+# Защитная сетка НАД _EXPERIENCE_RE (и любым другим будущим паттерном по
+# опыту) — не замена. Находка на реальном тендере №0373100134626000473
+# (2026-09-25/26, см. CLAUDE.md, открытый п.3): реальное требование к опыту
+# было сформулировано не как «не менее N лет», а как «опыт... цена которого
+# не менее 20% НМЦК» — экстрактор молча вернул пустой список, неотличимый
+# от «требования реально нет». Ищет по ВСЕМУ тексту (не по отдельным
+# предложениям, как основной цикл ниже) — именно потому, что в реальном
+# документе фраза с числом лежала в ОТДЕЛЬНОМ предложении от слова «опыт».
+_EXPERIENCE_WORD_RE = re.compile(r"опыт[а-яё]*", re.IGNORECASE)
+_NUMBER_NEARBY_RE = re.compile(
+    r"\d+(?:[.,]\d+)?\s*(?:%|процент[а-яё]*|лет\b|год[а-яё]*|руб[а-яё.]*)", re.IGNORECASE
+)
+# Задача предложила «скажем, 200 символов» как отправную точку — на реальном
+# документе (тендер №0373100134626000473) расстояние от слова «опыт» до
+# «20 процентов» оказалось около 285 символов (число лежит в отдельном
+# предложении/абзаце после перечисления «1) ... или 2) ...», см. заметку
+# выше) — со строгими 200 находка не сработала бы на собственном тестовом
+# примере задачи. Увеличено до 300 с запасом, проверено именно на этом
+# документе, не подобрано произвольно.
+_UNCLEAR_WINDOW_CHARS = 300
 _PENALTY_RATE_RE = re.compile(
     r"штраф[а-яё\s]{0,20}размере\s*(\d+(?:[.,]\d+)?)\s*%[^\n]{0,30}за каждый день",
     re.IGNORECASE,
@@ -128,6 +149,53 @@ def _scan_hidden_risks(sentence: str) -> list[HiddenRisk]:
     return risks
 
 
+def _scan_unclear_experience(document_text: str) -> list[ParticipantRequirement]:
+    """Помечает «похоже на требование к опыту, но не распознано» вместо
+    молчаливого пропуска — см. заметку у `_EXPERIENCE_WORD_RE` выше.
+
+    Для каждого вхождения корня «опыт»: если в окне ±`_UNCLEAR_WINDOW_CHARS`
+    символов уже срабатывает `_EXPERIENCE_RE` — штатный паттерн справился,
+    ничего не добавляем (не дублируем то, что и так нашлось). Если нет, но
+    в этом же окне встретилось число, похожее на процент/годы/рубли —
+    штатный паттерн зря промолчал: добавляем `kind="unclear"` с фрагментом
+    текста для ручной проверки эксперта. Дедуплицируется по позиции
+    найденного числа — иначе несколько упоминаний «опыт» рядом с одним и
+    тем же числом (обычное дело в перечислениях «1) ... или 2) ...») дали
+    бы несколько одинаковых находок."""
+    found: list[ParticipantRequirement] = []
+    reported_number_spans: set[tuple[int, int]] = set()
+
+    for word_match in _EXPERIENCE_WORD_RE.finditer(document_text):
+        window_start = max(0, word_match.start() - _UNCLEAR_WINDOW_CHARS)
+        window_end = min(len(document_text), word_match.end() + _UNCLEAR_WINDOW_CHARS)
+        window = document_text[window_start:window_end]
+
+        if _EXPERIENCE_RE.search(window):
+            continue
+
+        number_match = _NUMBER_NEARBY_RE.search(window)
+        if number_match is None:
+            continue
+
+        number_span = (window_start + number_match.start(), window_start + number_match.end())
+        if number_span in reported_number_spans:
+            continue
+        reported_number_spans.add(number_span)
+
+        found.append(
+            ParticipantRequirement(
+                description=(
+                    "Похоже, есть требование к опыту, формулировка не распознана "
+                    "автоматически — требуется ручная проверка текста"
+                ),
+                kind="unclear",
+                raw_text=" ".join(window.split()),
+            )
+        )
+
+    return found
+
+
 def extract_requirements(tender_purchase_number: str, document_text: str) -> ExtractedRequirements:
     timeline = SubmissionTimeline()
     security_requirements: list[SecurityRequirement] = []
@@ -189,6 +257,8 @@ def extract_requirements(tender_purchase_number: str, document_text: str) -> Ext
             )
 
         hidden_risks.extend(_scan_hidden_risks(sentence))
+
+    participant_requirements.extend(_scan_unclear_experience(document_text))
 
     return ExtractedRequirements(
         tender_purchase_number=tender_purchase_number,
