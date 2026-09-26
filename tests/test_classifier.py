@@ -8,10 +8,26 @@ from classifier import ConstructionClassifier, load_construction_codes
 
 def test_loads_expected_number_of_codes():
     codes = load_construction_codes()
-    # 548 — исходный официальный раздел «Строительство» (41/42/43) + 15,
+    # 548 — исходный официальный раздел «Строительство» (41/42/43) + 13,
     # добавленные 2026-09-26 (49.41 автогрузоперевозки, 81.30 благоустройство
     # ландшафта — реальная ниша первого клиента пилота, см. okpd2.py).
-    assert len(codes) == 563
+    # Изначально было добавлено 15 строк, включая корни "49"/"81" целиком —
+    # это оказалось ошибкой (поднимало в скоуп весь раздел 81, включая
+    # клининг/уборку снега/вентиляцию, не только благоустройство), корневые
+    # записи убраны в тот же день после честной проверки на реальных данных.
+    assert len(codes) == 561
+
+
+def test_scope_extension_does_not_admit_whole_root_sections():
+    """Регрессия на находку 2026-09-26: добавление 49.41/81.30 не должно
+    поднимать в скоуп весь раздел 49 или 81 целиком (было — по ошибке,
+    из-за корневых записей "49"/"81" в CSV, которые открывали посторонние
+    услуги вроде уборки снега/такси под тем же корнем)."""
+    classifier = ConstructionClassifier()
+    assert not classifier.is_construction_code("81.29.12.000")  # уборка снега
+    assert not classifier.is_construction_code("81.22.12.000")  # очистка вентиляции
+    assert not classifier.is_construction_code("81.21.10.000")  # клининг помещений
+    assert not classifier.is_construction_code("49.32.11.000")  # такси
 
 
 def test_scope_extended_codes_present():
