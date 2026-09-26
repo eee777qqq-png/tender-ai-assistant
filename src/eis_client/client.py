@@ -271,6 +271,42 @@ class EISClient:
         )
         return results
 
+    def get_construction_documents_from_local_archives(
+        self, archive_paths: list[Path]
+    ) -> list[ConstructionDocument]:
+        """То же самое, что `get_construction_documents()`, но БЕЗ сети — читает
+        архивы, уже скачанные ранее на диск (`raw_archive_dir=` при прошлом
+        запуске `get_construction_documents()`, см. `data/raw_notices*`).
+
+        Добавлено 2026-09-26, чтобы можно было гонять матчинг (`match_real_notices.py`)
+        на реальных, уже полученных архивах, не делая новый сетевой запрос
+        к ЕИС при каждой проверке. Использует ровно ту же логику разбора и
+        фильтрации (`_extract_xml_files`/`_find_okpd2_codes`/`_find_reestr_number`,
+        фильтр `classifier.is_construction_code()`), что и сетевой путь — это
+        не отдельная, потенциально расходящаяся копия."""
+        classifier = self._require_classifier()
+        results: list[ConstructionDocument] = []
+        for archive_path in archive_paths:
+            archive_bytes = Path(archive_path).read_bytes()
+            for file_name, xml_bytes in self._extract_xml_files(archive_bytes):
+                try:
+                    ET.fromstring(xml_bytes)
+                except ET.ParseError:
+                    continue
+                codes = self._find_okpd2_codes(xml_bytes)
+                construction_codes = [c for c in codes if classifier.is_construction_code(c)]
+                if construction_codes:
+                    results.append(
+                        ConstructionDocument(
+                            archive_url=str(archive_path),
+                            file_name=file_name,
+                            okpd2_codes=construction_codes,
+                            reestr_number=self._find_reestr_number(xml_bytes),
+                            raw_xml=xml_bytes,
+                        )
+                    )
+        return results
+
     def _require_classifier(self):
         if self._classifier is None:
             raise EISRequestError(

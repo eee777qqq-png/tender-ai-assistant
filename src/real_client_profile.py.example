@@ -1,0 +1,63 @@
+"""ШАБЛОН реального профиля клиента (Агент 11) — коммитится в git, в отличие
+от `real_client_profile.py` (реальные ПДн, в `.gitignore`, см. CLAUDE.md).
+
+Как использовать:
+    1. Скопировать этот файл в `src/real_client_profile.py` (без `.example`).
+    2. Заполнить реальными данными вместо примеров ниже.
+    3. НЕ коммитить получившийся `real_client_profile.py` — `.gitignore` уже
+       это блокирует, но проверьте `git status`, если сомневаетесь.
+
+Без `src/real_client_profile.py` на диске `match_real_notices.py` откажется
+запускаться с понятной ошибкой (см. `_MISSING_PROFILE_HINT` там) — это
+ожидаемо для любого окружения, кроме личной машины Edwin, где реальный файл
+уже лежит локально.
+"""
+
+from __future__ import annotations
+
+from onboarding.models import Capacity, ClientProfile, FinancialReadiness, LegalInfo, PermitsExperience
+from onboarding.tax_config import TaxRegimeChoice
+from onboarding.validation import validate_profile
+
+REAL_CLIENT_ID = "example-client-id"
+
+
+def get_real_client_profile() -> ClientProfile:
+    """Строит реальный профиль клиента и прогоняет автоматическую валидацию
+    формата (`validate_profile()`) — не экспертную проверку (см. докстринг
+    настоящего `real_client_profile.py` про то, почему `mark_ready()` здесь
+    не вызывается)."""
+    profile = ClientProfile(
+        client_id=REAL_CLIENT_ID,
+        region_codes=["77"],  # список кодов регионов работы клиента, например ["50", "77"]
+        legal=LegalInfo(
+            org_name="ИП Пример Пример Примерович",
+            inn="000000000000",  # 10 цифр для ООО, 12 для ИП
+            ogrn="000000000000000",  # 13 цифр для ООО (ОГРН), 15 для ИП (ОГРНИП)
+            legal_address="000000, Пример, ул. Примерная, д. 1",
+            contact_person="Имя Фамилия",
+            phone="70000000000",
+            email="example@example.ru",
+        ),
+        permits_experience=PermitsExperience(
+            sro_membership=False,
+            sro_number="",  # заполнить, если sro_membership=True
+            licenses=[],
+            completed_contracts=[],  # реальные исполненные контракты — не выдумывать, если их нет
+            years_of_experience=0,
+        ),
+        capacity=Capacity(
+            staff_count=0,
+            equipment=[],
+            own_workforce_description="",
+            subcontractors_allowed=False,
+        ),
+        financial=FinancialReadiness(
+            tax_regime=TaxRegimeChoice.OTHER_NEEDS_CLARIFICATION,  # выбрать реальный режим из 9 вариантов
+            avg_annual_revenue=0,
+            working_capital=0,
+            bank_guarantee_available=False,
+        ),
+    )
+    validate_profile(profile)
+    return profile

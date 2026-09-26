@@ -93,7 +93,7 @@ def _build_ready_profile() -> ClientProfile:
     как и должно быть перед тем, как им воспользуется Агент 6."""
     profile = ClientProfile(
         client_id="e2e-client-1",
-        region_code="77",
+        region_codes=["77"],
         legal=LegalInfo(
             org_name="ООО СтройМастер",
             inn="7701234567",
@@ -132,7 +132,7 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
     tender = next(t for t in SAMPLE_TENDERS if t.purchase_number == "0173200001426000101")
 
     print(f"\n=== Вход ===")
-    print(f"Профиль: {profile.client_id}, статус={profile.status.value}, регион={profile.region_code}")
+    print(f"Профиль: {profile.client_id}, статус={profile.status.value}, регионы={profile.region_codes}")
     print(f"Закупка: {tender.purchase_number} — {tender.name}")
     print(f"  НМЦК={tender.max_price:,.0f} руб., регион={tender.region_code}, "
           f"СРО={'требуется' if tender.requires_sro else 'не требуется'}, "

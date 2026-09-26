@@ -33,7 +33,7 @@ def make_ready_profile() -> ClientProfile:
     цепочки, поэтому тестируем его на той же связке профиль+закупка."""
     profile = ClientProfile(
         client_id="e2e-client-1",
-        region_code="77",
+        region_codes=["77"],
         legal=LegalInfo(
             org_name="ООО СтройМастер",
             inn="7701234567",
@@ -135,7 +135,7 @@ def test_summary_lists_missing_documents_with_actionable_hints():
 
 def test_summary_reports_when_tender_does_not_fit():
     profile = make_ready_profile()
-    profile.region_code = "50"  # клиент работает не в том регионе, что закупка
+    profile.region_codes = ["50"]  # клиент работает не в том регионе, что закупка
     match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
 
     summary = build_client_summary(match, completeness, package)
@@ -204,7 +204,7 @@ def test_render_summary_text_always_includes_legal_boundary_notice():
     assert CLIENT_SUMMARY_LEGAL_NOTICE in render_summary_text(fitting_summary)
 
     profile_not_fitting = make_ready_profile()
-    profile_not_fitting.region_code = "50"
+    profile_not_fitting.region_codes = ["50"]
     match2, completeness2, package2, extracted2 = run_pipeline(profile_not_fitting, "0173200001426000101")
     non_fitting_summary = build_client_summary(match2, completeness2, package2)
     assert CLIENT_SUMMARY_LEGAL_NOTICE in render_summary_text(non_fitting_summary)

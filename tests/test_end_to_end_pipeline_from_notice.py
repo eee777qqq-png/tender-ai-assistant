@@ -122,7 +122,7 @@ NOTICE_XML = """<export>
 def _build_ready_profile() -> ClientProfile:
     profile = ClientProfile(
         client_id="e2e-client-from-notice",
-        region_code="77",
+        region_codes=["77"],
         legal=LegalInfo(
             org_name="ООО СтройМастер",
             inn="7701234567",

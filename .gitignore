@@ -14,3 +14,8 @@ data/regulatory_updates.sqlite3
 data/raw/
 data/raw_notices/
 data/raw_notices*/
+
+# Реальный профиль клиента (Агент 11) — настоящие ПДн (ИНН, адрес, телефон,
+# email), не тестовые данные. См. src/real_client_profile.py.example —
+# шаблон без реальных значений, тот коммитится.
+src/real_client_profile.py

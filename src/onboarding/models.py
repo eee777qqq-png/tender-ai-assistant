@@ -125,10 +125,12 @@ class ExpertReview:
 class ClientProfile:
     """Профиль клиента целиком — 4 блока + статусная модель.
 
-    region_code — регион, в котором клиент готов участвовать в закупках
+    region_codes — регионы, в которых клиент готов участвовать в закупках
     (используется Агентом 2 при сопоставлении профиля с закупкой, см.
-    `classifier.tender_matching`), не часть исходных 4 блоков ТЗ, но нужен
-    для сквозного сценария "профиль → подходящая закупка".
+    `classifier.matching`), не часть исходных 4 блоков ТЗ, но нужен
+    для сквозного сценария "профиль → подходящая закупка". Список, не одно
+    значение — 2026-09-26, реальный профиль Edwin работает сразу в двух
+    регионах (Москва и Московская область), один `str` этого не выражал.
     """
 
     client_id: str
@@ -136,7 +138,7 @@ class ClientProfile:
     permits_experience: PermitsExperience = field(default_factory=PermitsExperience)
     capacity: Capacity = field(default_factory=Capacity)
     financial: FinancialReadiness = field(default_factory=FinancialReadiness)
-    region_code: str = ""
+    region_codes: list[str] = field(default_factory=list)
     status: ProfileStatus = ProfileStatus.DRAFT
     expert_reviews: list[ExpertReview] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

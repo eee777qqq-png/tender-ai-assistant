@@ -8,7 +8,16 @@ from classifier import ConstructionClassifier, load_construction_codes
 
 def test_loads_expected_number_of_codes():
     codes = load_construction_codes()
-    assert len(codes) == 548
+    # 548 — исходный официальный раздел «Строительство» (41/42/43) + 15,
+    # добавленные 2026-09-26 (49.41 автогрузоперевозки, 81.30 благоустройство
+    # ландшафта — реальная ниша первого клиента пилота, см. okpd2.py).
+    assert len(codes) == 563
+
+
+def test_scope_extended_codes_present():
+    classifier = ConstructionClassifier()
+    assert classifier.is_construction_code("49.41.19.900")  # автогрузоперевозки
+    assert classifier.is_construction_code("81.30.10.000")  # благоустройство ландшафта
 
 
 def test_top_level_sections_present():

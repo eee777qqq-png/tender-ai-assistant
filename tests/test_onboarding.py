@@ -19,7 +19,7 @@ from onboarding import (
 def make_valid_profile() -> ClientProfile:
     return ClientProfile(
         client_id="client-1",
-        region_code="77",
+        region_codes=["77"],
         legal=LegalInfo(
             org_name="ООО Стройсервис",
             inn="7701234567",

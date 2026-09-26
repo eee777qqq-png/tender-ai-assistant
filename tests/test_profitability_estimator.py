@@ -34,7 +34,7 @@ def make_profile(tax_regime=TaxRegimeChoice.USN_6_NO_VAT, bank_guarantee_availab
     наличием банковской гарантии — под конкретный тестовый сценарий."""
     profile = ClientProfile(
         client_id="e2e-client-1",
-        region_code="77",
+        region_codes=["77"],
         legal=LegalInfo(
             org_name="ООО СтройМастер",
             inn="7701234567",

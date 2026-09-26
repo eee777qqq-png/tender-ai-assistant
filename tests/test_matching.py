@@ -24,7 +24,7 @@ def make_moscow_contractor() -> ClientProfile:
     (единственную закупку из SAMPLE_TENDERS с совпадающим регионом)."""
     return ClientProfile(
         client_id="client-moscow-1",
-        region_code="77",
+        region_codes=["77"],
         legal=LegalInfo(
             org_name="ООО СтройМастер",
             inn="7701234567",

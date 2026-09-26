@@ -25,7 +25,7 @@ def make_ready_profile() -> ClientProfile:
     без этого assemble_document_package() обязан отказать."""
     profile = ClientProfile(
         client_id="client-1",
-        region_code="77",
+        region_codes=["77"],
         legal=LegalInfo(
             org_name="ООО СтройМастер",
             inn="7701234567",

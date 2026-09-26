@@ -1,7 +1,9 @@
-"""Агент 1 -> Агент 2 на РЕАЛЬНЫХ данных ЕИС: запрашивает извещения
-(subsystemType=PRIZ, documentType44=epNotificationEF2020), строит настоящий
-`Tender` из каждого через `eis_client.notice_document_to_tender()` и
-прогоняет через `classifier.match_profile_to_tender()`.
+"""Агент 1 -> Агент 2 на РЕАЛЬНЫХ данных ЕИС: строит настоящий `Tender` из
+извещения (subsystemType=PRIZ, documentType44=epNotificationEF2020) через
+`eis_client.notice_document_to_tender()` и прогоняет через
+`classifier.match_profile_to_tender()` — теперь против реального профиля
+первого клиента пилота (`real_client_profile.get_real_client_profile()`,
+2026-09-26), не иллюстративного примера.
 
 **С 2026-09-24 вечером `run_monitor.py` тоже строит и сохраняет `Tender`
 (`build_tenders()` → `MonitorStore.save_tenders()`), а извещения — теперь
@@ -13,13 +15,28 @@
 конвейера, не решает, кому они подходят (нет и не должно быть в нём
 единственного «клиента», под которого можно матчить каждый запуск).
 
-Запускать можно и без явных переменных окружения — `.env`/`config.py`
-теперь по умолчанию PRIZ/epNotificationEF2020:
+**Два режима получения документов, 2026-09-26:**
 
-    python src/match_real_notices.py --date 2026-09-23
+- сетевой (по умолчанию) — как и раньше, живой SOAP-запрос к ЕИС за
+  конкретную дату:
 
-(явное переопределение `EIS_SUBSYSTEM_TYPE=PRIZ` всё ещё работает, если
-`.env` вручную настроен иначе — например, временно на контракты.)
+      python src/match_real_notices.py --date 2026-09-23
+
+  (запускать можно и без явных переменных окружения — `.env`/`config.py`
+  по умолчанию PRIZ/epNotificationEF2020; явное переопределение
+  `EIS_SUBSYSTEM_TYPE=PRIZ` всё ещё работает, если `.env` настроен иначе);
+
+- офлайн (`--archive-dir`) — без единого сетевого запроса читает уже
+  скачанные ранее архивы (`data/raw_notices`/`data/raw_notices_r61`,
+  накопленные `run_monitor.py`/предыдущими прогонами с `raw_archive_dir=`)
+  через новый `EISClient.get_construction_documents_from_local_archives()`
+  (та же логика разбора/фильтрации, что и у сетевого пути — не отдельная
+  копия):
+
+      python src/match_real_notices.py --archive-dir data/raw_notices
+
+  `--date` в этом режиме не используется — архивы за все даты в каталоге
+  обрабатываются разом.
 
 **Честная оговорка про requires_sro/min_experience_years** — эти 2 поля
 `Tender` не извлекаются из извещения (проверено на 463 реальных документах,
@@ -29,16 +46,12 @@ False/0. Результат матчинга по этим двум критер
 реальным требованиям закупки**, пока их не проверит человек по вложенным
 документам извещения — скрипт печатает предупреждение об этом на каждом
 запуске, не только в докстринге.
-
-Профиль клиента — один иллюстративный пример (см. `_example_profile()`),
-не настоящий клиент: у проекта пока нет хранилища профилей (Агент 11 —
-только форма и валидация, без БД), реальный профиль будет передаваться
-сюда, когда оно появится.
 """
 
 from __future__ import annotations
 
 import argparse
+import glob
 import logging
 import sys
 from datetime import date, timedelta
@@ -51,16 +64,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from classifier import ConstructionClassifier, match_profile_to_tender
 from eis_client import EISClient, EISConfig, notice_document_to_tender
 from eis_client.exceptions import EISError
-from onboarding import (
-    Capacity,
-    ClientProfile,
-    CompletedContract,
-    FinancialReadiness,
-    LegalInfo,
-    PermitsExperience,
-    TaxRegimeChoice,
-    validate_profile,
-)
+
+_MISSING_PROFILE_HINT = """
+Не найден src/real_client_profile.py — реальный профиль клиента (Агент 11).
+
+Это ОЖИДАЕМО для любого окружения, кроме личной машины Edwin: файл содержит
+настоящие ПДн (ИНН, домашний адрес, телефон, email) и намеренно НЕ хранится
+в git (см. .gitignore, тот же принцип, что и у data/raw_notices/.env).
+
+Что делать:
+    cp src/real_client_profile.py.example src/real_client_profile.py
+и заполнить реальными данными клиента (см. комментарии в файле).
+
+Скрипт НЕ подставляет вместо этого файла никакую заглушку/демо-профиль —
+молчаливая подмена реального клиента демо-данными означала бы, что вывод
+матчинга выглядел бы правдоподобно, но относился бы не к тому клиенту.
+""".strip()
+
+try:
+    from real_client_profile import get_real_client_profile
+except ModuleNotFoundError as exc:
+    if exc.name != "real_client_profile":
+        raise
+    get_real_client_profile = None  # type: ignore[assignment]
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -79,9 +105,10 @@ def parse_args() -> argparse.Namespace:
         help="Дата извещений (YYYY-MM-DD), по умолчанию — вчера",
     )
     parser.add_argument(
-        "--region-code",
+        "--archive-dir",
         default=None,
-        help="Регион профиля-примера (по умолчанию — тот же, что EIS_ORG_REGION в конфиге)",
+        help="Офлайн-режим: читать уже скачанные архивы *.zip из этого каталога "
+        "(например, data/raw_notices) вместо живого запроса к ЕИС. --date игнорируется.",
     )
     parser.add_argument(
         "--requires-sro",
@@ -99,45 +126,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _example_profile(region_code: str) -> ClientProfile:
-    """Один иллюстративный профиль клиента — не настоящий (см. докстринг модуля)."""
-    profile = ClientProfile(
-        client_id="demo-client",
-        region_code=region_code,
-        legal=LegalInfo(
-            org_name="ООО СтройМастер (пример)",
-            inn="7701234567",
-            ogrn="1027700132195",
-            legal_address="г. Москва, ул. Примерная, д. 1",
-            contact_person="Иванов Иван",
-            phone="+79991234567",
-            email="info@example.ru",
-        ),
-        permits_experience=PermitsExperience(
-            sro_membership=True,
-            sro_number="СРО-С-123-456",
-            completed_contracts=[
-                CompletedContract(object_name="Капремонт школы №5", customer="ДепОбр", amount=5_000_000, year=2024)
-            ],
-            years_of_experience=5,
-        ),
-        capacity=Capacity(staff_count=15, own_workforce_description="15 штатных рабочих"),
-        financial=FinancialReadiness(
-            tax_regime=TaxRegimeChoice.USN_6_NO_VAT,
-            avg_annual_revenue=50_000_000,
-            working_capital=3_000_000,
-            bank_guarantee_available=True,
-        ),
-    )
-    validate_profile(profile)
-    profile.submit_expert_review(reviewer="Edwin", approved=True)
-    profile.mark_ready()
-    return profile
-
-
 def main() -> int:
     load_dotenv()
     args = parse_args()
+
+    if get_real_client_profile is None:
+        logger.error(_MISSING_PROFILE_HINT)
+        return 1
 
     try:
         config = EISConfig.from_env()
@@ -163,18 +158,25 @@ def main() -> int:
         args.min_experience_years,
     )
 
-    region_code = args.region_code or config.org_region
-    profile = _example_profile(region_code)
+    profile = get_real_client_profile()
     classifier = ConstructionClassifier()
 
     with EISClient(config, construction_classifier=classifier) as client:
         try:
-            documents = client.get_construction_documents(args.date)
+            if args.archive_dir:
+                archive_paths = sorted(Path(p) for p in glob.glob(str(Path(args.archive_dir) / "*.zip")))
+                logger.info("Офлайн-режим: %s — найдено архивов: %d", args.archive_dir, len(archive_paths))
+                documents = client.get_construction_documents_from_local_archives(archive_paths)
+            else:
+                documents = client.get_construction_documents(args.date)
         except EISError as exc:
             logger.error("Ошибка при обращении к ЕИС: %s", exc)
             return 1
 
-    logger.info("Строительных документов за %s (регион %s): %d", args.date, config.org_region, len(documents))
+    if args.archive_dir:
+        logger.info("Строительных документов в %s: %d", args.archive_dir, len(documents))
+    else:
+        logger.info("Строительных документов за %s (регион %s): %d", args.date, config.org_region, len(documents))
 
     built = 0
     skipped = 0

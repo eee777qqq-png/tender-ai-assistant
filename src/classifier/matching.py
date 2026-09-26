@@ -87,14 +87,14 @@ def match_profile_to_tender(
         )
     )
 
-    region_ok = bool(profile.region_code) and profile.region_code == tender.region_code
+    region_ok = tender.region_code in profile.region_codes
     criteria.append(
         MatchCriterion(
             "region",
             region_ok,
-            "Регион клиента совпадает с регионом закупки"
+            "Регион закупки входит в регионы работы клиента"
             if region_ok
-            else f"Клиент работает в регионе {profile.region_code or '(не указан)'}, "
+            else f"Клиент работает в регионах {profile.region_codes or '(не указаны)'}, "
             f"закупка в регионе {tender.region_code}",
         )
     )
