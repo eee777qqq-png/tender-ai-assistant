@@ -25,7 +25,7 @@ SOAP-фолта: 29 строительных извещений за один д
 (тот работает с КОНТРАКТАМИ по умолчанию, `.env`: `EIS_SUBSYSTEM_TYPE=RGK`,
 `EIS_DOCUMENT_TYPE44=contract`) — но появился отдельный оркестрирующий
 скрипт `src/match_real_notices.py`, который запрашивает ИЗВЕЩЕНИЯ живьём и
-реально вызывает `notice_document_to_tender()` → `match_profile_to_tender()`
+реально вызывает `notice_document_to_tender()` → `coarse_classify()`
 на настоящих документах. Переход самого `run_monitor.py`/`.env` на извещения
 по умолчанию — по-прежнему отдельное решение владельца, см. CLAUDE.md,
 «Известные пробелы», п.13.
@@ -421,7 +421,7 @@ def notice_document_to_tender(xml_bytes: bytes, *, requires_sro: bool, min_exper
     не в самом XML — тогда это не задача XML-парсера вообще. Не додумано —
     честный `ValueError` был бы неверным решением здесь (в отличие от
     остальных полей — эти два физически не подставить заглушкой 0/False,
-    не исказив матчинг Агента 2, `classifier.matching.match_profile_to_tender()`
+    не исказив матчинг Агента 2, `classifier.matching.coarse_classify()`
     использует их напрямую), поэтому вызывающий код обязан передать их сам.
 
     Отказывает (`ValueError`) с точным указанием поля, если хоть одно из

@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
-from classifier import ConstructionClassifier, match_profile_to_tender
+from classifier import ConstructionClassifier, coarse_classify, final_classify
 from classifier.sample_tenders import SAMPLE_TENDERS
 from client_consultant import build_client_summary, render_summary_text
 from completeness_check import check_completeness
@@ -138,16 +138,17 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
           f"СРО={'требуется' if tender.requires_sro else 'не требуется'}, "
           f"опыт от {tender.min_experience_years} лет")
 
-    # Агент 2 — классификатор: сектор + сопоставление профиля с закупкой
+    # Агент 2, проход 1 (coarse) — сектор + сопоставление профиля с закупкой,
+    # ДО скачивания документации (см. CLAUDE.md, п.11 — теперь закрыт).
     classifier = ConstructionClassifier()
-    match = match_profile_to_tender(profile, tender, classifier)
+    coarse_match = coarse_classify(profile, tender, classifier)
 
-    print(f"\n=== Агент 2: Классификатор ===")
-    for c in match.criteria:
+    print(f"\n=== Агент 2 (проход 1, coarse) ===")
+    for c in coarse_match.criteria:
         print(f"  [{'OK' if c.passed else 'FAIL'}] {c.name}: {c.message}")
-    print(f"  Итог: {'ПОДХОДИТ' if match.is_match else 'НЕ ПОДХОДИТ'} (score={match.score:.2f})")
+    print(f"  Итог: {'ПОДХОДИТ' if coarse_match.is_match else 'НЕ ПОДХОДИТ'} (score={coarse_match.score:.2f})")
 
-    assert match.is_match, f"Тестовые данные подобраны так, чтобы совпасть: {match.failed_reasons}"
+    assert coarse_match.is_match, f"Тестовые данные подобраны так, чтобы совпасть: {coarse_match.failed_reasons}"
 
     # Агент 3 — аналитик документации: извлечение требований из текста закупки
     extracted = extract_requirements(tender.purchase_number, SAMPLE_DOCUMENTS[tender.purchase_number])
@@ -162,10 +163,25 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
     for risk in extracted.hidden_risks:
         print(f"  РИСК [{risk.category.value}]: {risk.explanation}")
 
-    # По протоколу контроля качества выдача Агента 3 не уходит дальше без
-    # подтверждения эксперта. Здесь это решение принимает не код, а вызов
-    # ниже, стоящий за место реального человека, — подключение к Агенту 6
-    # его не убирает и не подменяет (без него сборка ниже отказала бы).
+    # Агент 2, проход 2 (final) — сразу после Агента 3, автоматически, без
+    # ожидания экспертной проверки (final_classify её не требует — см.
+    # докстринг classifier.matching). Здесь профиль подтверждает найденные
+    # требования (СРО + исполненный контракт), так что вердикт не меняется —
+    # реальный случай переворота вердикта проверяется отдельно, в
+    # tests/test_matching.py.
+    match = final_classify(profile, tender, classifier, extracted)
+    print(f"\n=== Агент 2 (проход 2, final, после Агента 3) ===")
+    for c in match.criteria:
+        print(f"  [{'OK' if c.passed else 'FAIL'}] {c.name}: {c.message}")
+    print(f"  Итог: {'ПОДХОДИТ' if match.is_match else 'НЕ ПОДХОДИТ'} (score={match.score:.2f})")
+    assert match.is_match, f"Профиль подобран так, чтобы подтвердить находки Агента 3: {match.failed_reasons}"
+
+    # По протоколу контроля качества выдача Агента 3 не уходит дальше (к
+    # Агенту 6) без подтверждения эксперта. Здесь это решение принимает не
+    # код, а вызов ниже, стоящий за место реального человека — подключение
+    # к Агенту 6 его не убирает и не подменяет (без него сборка ниже
+    # отказала бы). Этот шаг НЕ требуется для final_classify() выше — тот
+    # уже отработал на непроверенных находках, намеренно (см. CLAUDE.md).
     extracted.mark_expert_reviewed(reviewer="Edwin")
     print(f"  Проверено экспертом: {extracted.expert_reviewed} (эксперт: {extracted.expert_reviewer})")
 
@@ -286,12 +302,14 @@ def test_pipeline_from_classifier_through_document_analyst_to_completeness_check
         abs=0.5,
     )
 
-    # Агент 2 (повторно) — теперь, когда Агент 5 посчитал реальную маржу,
-    # критерий финансовой готовности пересчитывается по ней, а не по грубой
-    # эвристике "выручка >= НМЦК", использованной на самом первом проходе
-    # выше (см. CLAUDE.md, «Известные пробелы», закрытые пункты 1/2).
-    final_match = match_profile_to_tender(profile, tender, classifier, profitability=profitability)
-    print(f"\n=== Агент 2 (повторно, с реальной маржой Агента 5) ===")
+    # Агент 2 (final_classify, пересчитан с профилем и с реальной маржой) —
+    # теперь, когда Агент 5 посчитал реальную маржу, критерий финансовой
+    # готовности пересчитывается по ней, а не по грубой эвристике "выручка
+    # >= НМЦК", использованной на самом первом проходе выше (см. CLAUDE.md,
+    # «Известные пробелы», закрытые пункты 1/2/11). Именно этот вердикт, а
+    # не coarse_match/промежуточный match выше, уходит в Агент 8.
+    final_match = final_classify(profile, tender, classifier, extracted, profitability=profitability)
+    print(f"\n=== Агент 2 (final, с реальной маржой Агента 5) ===")
     for c in final_match.criteria:
         print(f"  [{'OK' if c.passed else 'FAIL'}] {c.name}: {c.message}")
     assert final_match.is_match, f"Ожидали, что реальная маржа тоже положительна: {final_match.failed_reasons}"
@@ -323,7 +341,7 @@ def test_pipeline_fails_completeness_when_required_field_missing():
     tender = next(t for t in SAMPLE_TENDERS if t.purchase_number == "0173200001426000101")
 
     classifier = ConstructionClassifier()
-    match = match_profile_to_tender(profile, tender, classifier)
+    match = coarse_classify(profile, tender, classifier)
     assert match.is_match  # пробел в контактном лице не влияет на матчинг
 
     extracted = extract_requirements(tender.purchase_number, SAMPLE_DOCUMENTS[tender.purchase_number])

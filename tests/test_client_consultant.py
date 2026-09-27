@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
-from classifier import ConstructionClassifier, match_profile_to_tender
+from classifier import ConstructionClassifier, coarse_classify
 from classifier.sample_tenders import SAMPLE_TENDERS
 from client_consultant import build_client_summary, render_summary_text
 from completeness_check import check_completeness
@@ -74,7 +74,7 @@ def find_tender(purchase_number: str):
 def run_pipeline(profile: ClientProfile, purchase_number: str):
     tender = find_tender(purchase_number)
     classifier = ConstructionClassifier()
-    match = match_profile_to_tender(profile, tender, classifier)
+    match = coarse_classify(profile, tender, classifier)
 
     extracted = extract_requirements(purchase_number, SAMPLE_DOCUMENTS[purchase_number])
     extracted.mark_expert_reviewed(reviewer="Edwin")

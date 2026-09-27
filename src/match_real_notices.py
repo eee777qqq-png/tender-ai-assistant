@@ -1,16 +1,37 @@
 """Агент 1 -> Агент 2 на РЕАЛЬНЫХ данных ЕИС: строит настоящий `Tender` из
 извещения (subsystemType=PRIZ, documentType44=epNotificationEF2020) через
-`eis_client.notice_document_to_tender()` и прогоняет через
-`classifier.match_profile_to_tender()` — теперь против реального профиля
-первого клиента пилота (`real_client_profile.get_real_client_profile()`,
-2026-09-26), не иллюстративного примера.
+`eis_client.notice_document_to_tender()` и прогоняет через два явных прохода
+Агента 2 — против реального профиля первого клиента пилота
+(`real_client_profile.get_real_client_profile()`, 2026-09-26), не
+иллюстративного примера.
+
+**Два прохода классификации, не один — CLAUDE.md, п.11, закрыт 2026-09-27.**
+Раньше здесь был единственный вызов `match_profile_to_tender()` сразу на
+`Tender` из извещения — с честной заглушкой `requires_sro=False`,
+`min_experience_years=0` (см. ниже) вердикт «ПОДХОДИТ» мог быть ложным, и на
+практике был (тендер №0373200032226000750, капремонт ЖКХ, 2026-09-26).
+Теперь:
+
+1. `classifier.coarse_classify()` — дешёвый фильтр без сети, как и раньше.
+2. Если прошёл — `eis_client.fetch_participant_requirements()` скачивает и
+   разбирает приложение «Требования к заявке» (Агент 3), без единого
+   ручного шага.
+3. `classifier.final_classify()` — окончательный вердикт с учётом того, что
+   реально нашёл Агент 3, а не заглушки `requires_sro`/`min_experience_years`.
+   Именно этот вердикт печатается как итоговый, не вердикт прохода 1.
+
+Если в извещении нет приложения нужного типа (`fetch_participant_requirements()`
+вернул `None`) — используется пустой `ExtractedRequirements` (нет находок,
+значит и противоречить нечему), не пропуск закупки: coarse-вердикт остаётся
+окончательным, честно помечен как «документация не проверена».
 
 **С 2026-09-24 вечером `run_monitor.py` тоже строит и сохраняет `Tender`
 (`build_tenders()` → `MonitorStore.save_tenders()`), а извещения — теперь
 продакшен-умолчание в `.env`/`.env.example`.** Этот скрипт — не дублирует
 монитор, а делает то, чего у монитора сознательно нет: сразу МАТЧИТ каждый
-построенный `Tender` против клиента (`classifier.match_profile_to_tender()`)
-и печатает результат в консоль — удобно для ручной проверки/демонстрации.
+построенный `Tender` против клиента (`classifier.coarse_classify()`/
+`final_classify()`, см. выше) и печатает результат в консоль — удобно для
+ручной проверки/демонстрации.
 У монитора эта функция по-прежнему не его задача: он копит `Tender`-ы для
 конвейера, не решает, кому они подходят (нет и не должно быть в нём
 единственного «клиента», под которого можно матчить каждый запуск).
@@ -61,8 +82,9 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from classifier import ConstructionClassifier, match_profile_to_tender
-from eis_client import EISClient, EISConfig, notice_document_to_tender
+from classifier import ConstructionClassifier, coarse_classify, final_classify
+from document_analyst.models import ExtractedRequirements
+from eis_client import EISClient, EISConfig, fetch_participant_requirements, notice_document_to_tender
 from eis_client.exceptions import EISError
 
 _MISSING_PROFILE_HINT = """
@@ -161,6 +183,11 @@ def main() -> int:
     profile = get_real_client_profile()
     classifier = ConstructionClassifier()
 
+    built = 0
+    skipped = 0
+    coarse_rejected = 0
+    overturned_by_agent3 = 0
+
     with EISClient(config, construction_classifier=classifier) as client:
         try:
             if args.archive_dir:
@@ -173,43 +200,88 @@ def main() -> int:
             logger.error("Ошибка при обращении к ЕИС: %s", exc)
             return 1
 
-    if args.archive_dir:
-        logger.info("Строительных документов в %s: %d", args.archive_dir, len(documents))
-    else:
-        logger.info("Строительных документов за %s (регион %s): %d", args.date, config.org_region, len(documents))
-
-    built = 0
-    skipped = 0
-    for document in documents:
-        if document.raw_xml is None:
-            skipped += 1
-            continue
-        try:
-            tender = notice_document_to_tender(
-                document.raw_xml,
-                requires_sro=args.requires_sro,
-                min_experience_years=args.min_experience_years,
+        if args.archive_dir:
+            logger.info("Строительных документов в %s: %d", args.archive_dir, len(documents))
+        else:
+            logger.info(
+                "Строительных документов за %s (регион %s): %d", args.date, config.org_region, len(documents)
             )
-        except ValueError as exc:
-            logger.warning("Пропущен %s — не удалось построить Tender: %s", document.file_name, exc)
-            skipped += 1
-            continue
 
-        built += 1
-        match = match_profile_to_tender(profile, tender, classifier)
+        for document in documents:
+            if document.raw_xml is None:
+                skipped += 1
+                continue
+            try:
+                tender = notice_document_to_tender(
+                    document.raw_xml,
+                    requires_sro=args.requires_sro,
+                    min_experience_years=args.min_experience_years,
+                )
+            except ValueError as exc:
+                logger.warning("Пропущен %s — не удалось построить Tender: %s", document.file_name, exc)
+                skipped += 1
+                continue
 
-        print(f"\n=== {tender.purchase_number} ===")
-        print(f"  {tender.name}")
-        print(f"  Заказчик: {tender.customer_name}")
-        print(
-            f"  НМЦК: {tender.max_price:,.2f} руб., регион: {tender.region_code}, "
-            f"срок подачи: {tender.submission_deadline}"
-        )
-        for c in match.criteria:
-            print(f"  [{'OK' if c.passed else 'FAIL'}] {c.name}: {c.message}")
-        print(f"  Итог: {'ПОДХОДИТ' if match.is_match else 'НЕ ПОДХОДИТ'} (score={match.score:.2f})")
+            built += 1
+            print(f"\n=== {tender.purchase_number} ===")
+            print(f"  {tender.name}")
+            print(f"  Заказчик: {tender.customer_name}")
+            print(
+                f"  НМЦК: {tender.max_price:,.2f} руб., регион: {tender.region_code}, "
+                f"срок подачи: {tender.submission_deadline}"
+            )
 
-    logger.info("Готово. Tender построен и сматчен: %d, пропущено: %d", built, skipped)
+            # Проход 1 — coarse, до скачивания документации закупки.
+            coarse = coarse_classify(profile, tender, classifier)
+            print(f"  --- Агент 2, проход 1 (coarse) ---")
+            for c in coarse.criteria:
+                print(f"  [{'OK' if c.passed else 'FAIL'}] {c.name}: {c.message}")
+
+            if not coarse.is_match:
+                coarse_rejected += 1
+                print(f"  Итог: НЕ ПОДХОДИТ (score={coarse.score:.2f}) — документация не запрашивалась")
+                continue
+
+            # Проход 1 прошёл — только теперь скачиваем и разбираем
+            # документацию закупки (Агент 3), не раньше.
+            try:
+                extracted = fetch_participant_requirements(client, document.raw_xml, tender.purchase_number)
+            except EISError as exc:
+                logger.warning(
+                    "Не удалось скачать документацию закупки %s (Агент 3): %s — используем только coarse-вердикт",
+                    tender.purchase_number,
+                    exc,
+                )
+                extracted = None
+
+            if extracted is None:
+                extracted = ExtractedRequirements(tender_purchase_number=tender.purchase_number)
+                print(
+                    "  (в извещении не нашлось приложения «Требования к заявке» — "
+                    "coarse-вердикт остаётся окончательным, документация не проверена)"
+                )
+
+            final = final_classify(profile, tender, classifier, extracted)
+            print(f"  --- Агент 2, проход 2 (final, после Агента 3) ---")
+            for c in final.criteria:
+                print(f"  [{'OK' if c.passed else 'FAIL'}] {c.name}: {c.message}")
+            print(f"  Итог: {'ПОДХОДИТ' if final.is_match else 'НЕ ПОДХОДИТ'} (score={final.score:.2f})")
+
+            if coarse.is_match and not final.is_match:
+                overturned_by_agent3 += 1
+                print(
+                    "  ⚠ Проход 1 сказал «ПОДХОДИТ», но Агент 3 нашёл в документации то, "
+                    "что профиль не подтверждает — итоговый вердикт изменён."
+                )
+
+    logger.info(
+        "Готово. Tender построен: %d, пропущено: %d, отсеяно на проходе 1: %d, "
+        "перевёрнуто Агентом 3 на проходе 2: %d",
+        built,
+        skipped,
+        coarse_rejected,
+        overturned_by_agent3,
+    )
     return 0
 
 

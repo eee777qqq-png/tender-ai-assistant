@@ -31,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from classifier import ConstructionClassifier, match_profile_to_tender
+from classifier import ConstructionClassifier, final_classify
 from client_consultant import build_client_summary, render_summary_text
 from completeness_check import check_completeness
 from document_analyst import extract_requirements
@@ -176,21 +176,25 @@ def test_pipeline_from_real_notice_structure_through_to_client_summary():
     assert tender.publish_date == date(2026, 8, 1)
     assert tender.submission_deadline == date(2026, 8, 20)
 
-    # Агент 2 — классификатор
-    classifier = ConstructionClassifier()
-    match = match_profile_to_tender(profile, tender, classifier)
+    # Агент 3 — аналитик документации (тот же текст, что и в
+    # test_end_to_end_pipeline.py — извещение само по себе не источник
+    # текста документации, это отдельный документ закупки)
+    extracted = extract_requirements(tender.purchase_number, SAMPLE_DOCUMENTS[tender.purchase_number])
 
-    print(f"\n=== Агент 2: Классификатор ===")
+    # Агент 2 — final_classify(), не отдельный coarse-проход: этот тест
+    # проверяет путь Агент 1 -> Агент 2 целиком (см. докстринг файла), а
+    # разделение на coarse/final проходы и переворот вердикта на реальном
+    # противоречии проверяются отдельно, в tests/test_matching.py.
+    classifier = ConstructionClassifier()
+    match = final_classify(profile, tender, classifier, extracted)
+
+    print(f"\n=== Агент 2: Классификатор (final, после Агента 3) ===")
     for c in match.criteria:
         print(f"  [{'OK' if c.passed else 'FAIL'}] {c.name}: {c.message}")
     print(f"  Итог: {'ПОДХОДИТ' if match.is_match else 'НЕ ПОДХОДИТ'} (score={match.score:.2f})")
 
     assert match.is_match, f"Профиль подобран так, чтобы совпасть: {match.failed_reasons}"
 
-    # Агент 3 — аналитик документации (тот же текст, что и в
-    # test_end_to_end_pipeline.py — извещение само по себе не источник
-    # текста документации, это отдельный документ закупки)
-    extracted = extract_requirements(tender.purchase_number, SAMPLE_DOCUMENTS[tender.purchase_number])
     extracted.mark_expert_reviewed(reviewer="Edwin")
 
     # Агент 6 — сборщик документов
