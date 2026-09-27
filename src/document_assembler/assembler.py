@@ -21,6 +21,18 @@
 обязан быть проверен экспертом (`expert_reviewed`) — подключение Агента 3
 к Агенту 6 соединяет данные технически и не подменяет и не автоматизирует
 эту проверку.
+
+**Содержательная генерация — реализована частично, 2026-09-27 (CLAUDE.md,
+открытый п.2).** Не «заявка по единой форме» — единой федеральной формы
+заявки не существует (ст. 43 44-ФЗ задаёт только обязательное содержание,
+форму устанавливает заказчик в документации своей закупки; старая
+двухчастная схема аукциона по ст.66 и типовые формы Постановления №1401
+утратили силу с 01.01.2022, см. CLAUDE.md). Генерируется только механическая
+часть — черновик п.1/п.5 ст.43 (сведения об участнике + декларации,
+`docx_generator.generate_participant_info_docx()`), полностью из
+`ClientProfile`. П.2 (предложение по объекту закупки) и п.3 (предложение о
+цене) сознательно не генерируются — см. `_MANUAL_SECTIONS` ниже и
+`DocumentPackage.manual_sections`.
 """
 
 from __future__ import annotations
@@ -30,7 +42,39 @@ from document_analyst.models import ExtractedRequirements
 from onboarding.models import ClientProfile
 from onboarding.tax_config import label_for as tax_regime_label
 
-from .models import DocumentPackage, PackageField
+from .docx_generator import generate_participant_info_docx
+from .models import DocumentPackage, ManualSection, PackageField
+
+# Части заявки (ст. 43 44-ФЗ — действующая статья про заявку на участие в
+# закупке; старая двухчастная схема аукциона по ст.66 утратила силу с
+# 01.01.2022, см. CLAUDE.md, открытый п.2), которые Агент 6 сознательно не
+# генерирует ни для одной закупки — риск/причина не зависят от конкретных
+# профиля и закупки, поэтому список статичный, не строится в `assemble_
+# document_package()` по условию.
+_MANUAL_SECTIONS: tuple[ManualSection, ...] = (
+    ManualSection(
+        name="Предложение по объекту закупки",
+        article_reference="ст. 43 п. 2 44-ФЗ",
+        note=(
+            "Требует ручного заполнения на основании документации конкретной "
+            "закупки — конкретные показатели товара/характеристики работ или "
+            "услуг под техническое задание именно этой закупки. Агент 3 в "
+            "текущем виде не извлекает эти данные в пригодном для "
+            "автогенерации виде; правдоподобный, но не проверенный текст "
+            "здесь — прямой риск того, что предложение не будет "
+            "соответствовать реальным требованиям документации."
+        ),
+    ),
+    ManualSection(
+        name="Предложение о цене контракта",
+        article_reference="ст. 43 п. 3 44-ФЗ",
+        note=(
+            "Требует решения человека (собственника бизнеса) — выбор цены/"
+            "снижения на аукционе не факт из профиля клиента, а бизнес-"
+            "решение по конкретной закупке, не автоматизируется."
+        ),
+    ),
+)
 
 
 def assemble_document_package(
@@ -172,4 +216,6 @@ def assemble_document_package(
         tender_purchase_number=tender.purchase_number,
         fields=fields,
         hidden_risks=list(extracted_requirements.hidden_risks) if extracted_requirements else [],
+        participant_info_docx=generate_participant_info_docx(profile, tender),
+        manual_sections=list(_MANUAL_SECTIONS),
     )

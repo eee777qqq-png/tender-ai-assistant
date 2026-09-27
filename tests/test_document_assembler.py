@@ -1,13 +1,16 @@
+import io
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from docx import Document
+
 from classifier.sample_tenders import SAMPLE_TENDERS
 from document_analyst import extract_requirements
 from document_analyst.models import ExtractedRequirements
 from document_analyst.sample_documents import SAMPLE_DOCUMENTS
-from document_assembler import assemble_document_package
+from document_assembler import assemble_document_package, generate_participant_info_docx
 from onboarding import (
     Capacity,
     ClientProfile,
@@ -223,3 +226,98 @@ def test_agent_3_hidden_risks_flow_into_package_without_blocking_completeness():
     # они физически не могут её заблокировать.
     assert not any("риск" in f.name.lower() for f in package.fields)
     assert package.is_complete()
+
+
+# -- Генерация черновика п.1/п.5 ст.43 44-ФЗ (2026-09-27, CLAUDE.md, п.2) ---
+
+
+def _docx_text(content: bytes) -> str:
+    document = Document(io.BytesIO(content))
+    parts = [p.text for p in document.paragraphs]
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                parts.append(cell.text)
+    return "\n".join(parts)
+
+
+def test_package_includes_generated_participant_info_docx():
+    profile = make_ready_profile()
+    tender = find_tender("0173200001426000101")
+
+    package = assemble_document_package(profile, tender)
+
+    assert package.participant_info_docx is not None
+    text = _docx_text(package.participant_info_docx)
+    assert profile.legal.org_name in text
+    assert profile.legal.inn in text
+    assert tender.purchase_number in text
+    # Единой типовой формы не существует — документ должен честно говорить
+    # об этом, не выглядеть как заявка "по форме".
+    assert "не заявка по единой форме" in text.lower()
+
+
+def test_generated_docx_marks_smp_declaration_as_needing_clarification_when_unset():
+    profile = make_ready_profile()
+    assert profile.legal.is_smp is None  # по умолчанию, не заполнено
+
+    content = generate_participant_info_docx(profile, find_tender("0173200001426000101"))
+
+    text = _docx_text(content)
+    assert "ТРЕБУЕТ УТОЧНЕНИЯ" in text
+
+
+def test_generated_docx_includes_smp_declaration_when_profile_confirms_it():
+    profile = make_ready_profile()
+    profile.legal.is_smp = True
+
+    content = generate_participant_info_docx(profile, find_tender("0173200001426000101"))
+
+    text = _docx_text(content)
+    assert "субъектам малого предпринимательства" in text.lower()
+    assert "ТРЕБУЕТ УТОЧНЕНИЯ" not in text
+
+
+def test_generated_docx_states_no_smp_declaration_needed_when_profile_denies_it():
+    profile = make_ready_profile()
+    profile.legal.is_smp = False
+
+    content = generate_participant_info_docx(profile, find_tender("0173200001426000101"))
+
+    text = _docx_text(content)
+    assert "не относится к субъектам малого предпринимательства" in text.lower()
+    assert "ТРЕБУЕТ УТОЧНЕНИЯ" not in text
+
+
+def test_package_lists_manual_sections_for_object_proposal_and_price():
+    """П.2 (предложение по объекту закупки) и п.3 (предложение о цене) ст.43
+    44-ФЗ — сознательно не генерируются никогда, независимо от профиля/
+    закупки (см. CLAUDE.md, открытый п.2)."""
+    profile = make_ready_profile()
+    tender = find_tender("0173200001426000101")
+
+    package = assemble_document_package(profile, tender)
+
+    assert len(package.manual_sections) == 2
+    names = {s.name for s in package.manual_sections}
+    assert "Предложение по объекту закупки" in names
+    assert "Предложение о цене контракта" in names
+    for section in package.manual_sections:
+        assert "ст. 43" in section.article_reference
+        assert section.note  # объяснение не пустое
+
+    # Часть 1/Часть 2 — устаревшая терминология (ст.66 утратила силу
+    # 01.01.2022), не должна просочиться в новый код.
+    assert not any("часть 1" in s.note.lower() or "часть 2" in s.note.lower() for s in package.manual_sections)
+
+
+def test_manual_sections_do_not_affect_completeness_check():
+    """manual_sections — не часть fields, поэтому Агент 7 (комплектность)
+    их не видит и они не блокируют is_complete()."""
+    profile = make_ready_profile()
+    tender = find_tender("0173200001426000101")
+
+    package = assemble_document_package(profile, tender)
+
+    assert package.manual_sections  # непустой список
+    assert package.is_complete()  # но не мешает считать пакет "полным" по fields
