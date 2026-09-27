@@ -358,3 +358,94 @@ def test_final_classify_uses_real_margin_from_agent5_like_coarse_does():
     assert final.is_match is True
     financial = next(c for c in final.criteria if c.name == "financial_capacity")
     assert "маржа" in financial.message.lower()
+
+
+# --- capacity: критерий заменён с тавтологии на нишевую проверку 2026-09-27,
+# см. CLAUDE.md, открытый п.10 ---
+
+
+def _make_tender(purchase_number: str, name: str, okpd2_code: str, region_code: str = "77") -> "object":
+    from classifier.tender import Tender
+
+    tender = find_tender("0173200001426000101")  # донор остальных полей, не относящихся к тесту
+    return Tender(
+        purchase_number=purchase_number,
+        name=name,
+        customer_name=tender.customer_name,
+        okpd2_code=okpd2_code,
+        region_code=region_code,
+        max_price=tender.max_price,
+        requires_sro=False,
+        min_experience_years=0,
+        publish_date=tender.publish_date,
+        submission_deadline=tender.submission_deadline,
+    )
+
+
+def test_capacity_passes_for_generic_contractor_regardless_of_tender_wording():
+    """«15 рабочих», без упоминания конкретного вида работ — многопрофильный
+    подрядчик, узкая ниша не распознана: должен подходить под любую закупку
+    раздела «Строительство», а не только под те, что текстуально совпадают
+    с формулировкой профиля (первая версия критерия ошибочно требовала
+    именно этого — см. докстринг `_capacity_criterion`)."""
+    profile = make_moscow_contractor()
+    classifier = ConstructionClassifier()
+    tender = _make_tender("t1", "Текущий ремонт помещений поликлиники", "41.20.40.900")
+
+    result = coarse_classify(profile, tender, classifier)
+
+    capacity = next(c for c in result.criteria if c.name == "capacity")
+    assert capacity.passed is True
+    assert "не распознана" in capacity.message
+
+
+def test_capacity_flags_manual_review_when_niche_does_not_match_tender_okpd2():
+    """Реальный случай 2026-09-27: клиент с самосвалами/благоустройством
+    (профиль сообщает об этом сам) на закупке текущего ремонта в
+    здравоохранении (малярка/сантехника, ОКПД2 41.20.40.900) — критерий
+    должен просить ручной проверки, не выдавать тихое «ПОДХОДИТ»."""
+    profile = make_moscow_contractor()
+    profile.capacity.equipment = ["самосвал"]
+    profile.capacity.own_workforce_description = "услуги по благоустройству ландшафта"
+    classifier = ConstructionClassifier()
+    tender = _make_tender(
+        "0373200114326000220",
+        "Выполнение работ по текущему ремонту объекта в сфере здравоохранения",
+        "41.20.40.900",
+    )
+
+    result = coarse_classify(profile, tender, classifier)
+
+    capacity = next(c for c in result.criteria if c.name == "capacity")
+    assert capacity.passed is False
+    assert "ТРЕБУЕТ РУЧНОЙ ПРОВЕРКИ" in capacity.message
+    assert result.is_match is False
+
+
+def test_capacity_passes_when_niche_matches_tender_okpd2():
+    """Тот же клиент (самосвалы) на закупке аренды грузового транспорта
+    (ОКПД2 49.41.20.000, ровно его ниша) — специализация подтверждена, не
+    просто совпадение по неизвестным словам."""
+    profile = make_moscow_contractor()
+    profile.capacity.equipment = ["самосвал"]
+    classifier = ConstructionClassifier()
+    tender = _make_tender("t2", "Аренда автосамосвала с водителем", "49.41.20.000")
+
+    result = coarse_classify(profile, tender, classifier)
+
+    capacity = next(c for c in result.criteria if c.name == "capacity")
+    assert capacity.passed is True
+    assert "специализация" in capacity.message.lower()
+
+
+def test_capacity_still_fails_without_staff_regardless_of_niche():
+    profile = make_moscow_contractor()
+    profile.capacity.staff_count = 0
+    classifier = ConstructionClassifier()
+    tender = _make_tender("t3", "Текущий ремонт", "41.20.40.900")
+
+    result = coarse_classify(profile, tender, classifier)
+
+    capacity = next(c for c in result.criteria if c.name == "capacity")
+    assert capacity.passed is False
+    assert "численность" in capacity.message.lower()
