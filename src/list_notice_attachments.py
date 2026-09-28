@@ -14,8 +14,12 @@
     # 1. Посмотреть все стройки за дату и список файлов каждой (имя, вид документа)
     python src/list_notice_attachments.py --date 2026-09-27
 
+    # 1b. То же самое сразу за несколько дней подряд — чтобы не гонять
+    #     скрипт по одному дню за раз (стройка бывает не каждый день)
+    python src/list_notice_attachments.py --date-from 2026-09-20 --date-to 2026-09-27
+
     # 2. Скачать все приложения конкретной закупки в папку (по номеру закупки
-    #    из вывода шага 1)
+    #    из вывода шага 1) — дату указывать ту же, на которой её нашли
     python src/list_notice_attachments.py --date 2026-09-27 \
         --download 0373200012326000999 --out-dir data/downloaded_attachments
 
@@ -30,7 +34,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -52,11 +56,14 @@ def _parse_date(value: str) -> date:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--date", required=True, help="Дата извещений, ГГГГ-ММ-ДД")
+    parser.add_argument("--date", help="Одна дата извещений, ГГГГ-ММ-ДД")
+    parser.add_argument("--date-from", help="Начало диапазона дат, ГГГГ-ММ-ДД")
+    parser.add_argument("--date-to", help="Конец диапазона дат (включительно), ГГГГ-ММ-ДД")
     parser.add_argument(
         "--download",
         metavar="PURCHASE_NUMBER",
-        help="Номер закупки — скачать её приложения вместо простого списка",
+        help="Номер закупки — скачать её приложения вместо простого списка "
+        "(нужен --date с тем же днём, на котором закупку нашли, не диапазон)",
     )
     parser.add_argument(
         "--out-dir",
@@ -65,22 +72,44 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.date:
+        dates = [_parse_date(args.date)]
+    elif args.date_from and args.date_to:
+        start = _parse_date(args.date_from)
+        end = _parse_date(args.date_to)
+        if end < start:
+            print("--date-to не может быть раньше --date-from")
+            return 1
+        dates = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    else:
+        print("Укажите либо --date, либо оба --date-from и --date-to")
+        return 1
+
     load_dotenv()
-    target_date = _parse_date(args.date)
     config = EISConfig.from_env()
     classifier = ConstructionClassifier()
 
     with EISClient(config, construction_classifier=classifier) as client:
-        documents = client.get_construction_documents(target_date)
-
-        if not documents:
-            print(f"Ничего не найдено за {target_date} — попробуйте другую дату.")
-            return 1
-
         if args.download:
+            if len(dates) != 1:
+                print("--download работает только с одной датой (--date), не с диапазоном")
+                return 1
+            documents = client.get_construction_documents(dates[0])
             return _download_one(client, documents, args.download, Path(args.out_dir))
 
-        _list_all(documents)
+        found_anything = False
+        for target_date in dates:
+            documents = client.get_construction_documents(target_date)
+            if not documents:
+                print(f"\n{target_date}: строек по стройке не найдено (честный ноль).")
+                continue
+            found_anything = True
+            print(f"\n### {target_date} ###")
+            _list_all(documents)
+
+        if not found_anything:
+            print("\nЗа весь диапазон строек не нашлось — попробуйте другие даты/регион.")
+            return 1
         return 0
 
 
