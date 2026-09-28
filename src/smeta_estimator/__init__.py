@@ -61,6 +61,12 @@ from .version_watch import (
     get_active_period_id,
     period_source_id,
 )
+from .work_volume_extractor import (
+    WorkVolumeCandidates,
+    WorkVolumeRow,
+    extract_work_volume_rows,
+    suggest_work_volume_candidates,
+)
 
 __all__ = [
     "AGENT_NAME",
@@ -83,6 +89,8 @@ __all__ = [
     "ResourcePriceResolution",
     "SmetaCostResult",
     "SmetaLineItem",
+    "WorkVolumeCandidates",
+    "WorkVolumeRow",
     "apply_prices",
     "build_cost_estimate",
     "build_regulatory_version",
@@ -91,6 +99,7 @@ __all__ = [
     "check_period_update",
     "download_fsnb_archive",
     "extract_fsnb_files",
+    "extract_work_volume_rows",
     "fetch_country_subjects",
     "fetch_current_prices_json",
     "fetch_gosr_report",
@@ -117,4 +126,5 @@ __all__ = [
     "review_match_result",
     "search_candidates",
     "suggest_material_candidates",
+    "suggest_work_volume_candidates",
 ]

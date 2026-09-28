@@ -18,9 +18,12 @@ parse_material_catalog_xml`, то есть те же данные, что `resou
 /`current_prices`, но с сохранённым названием), отфильтрованный по
 совпадению слов названия категории со словами названия ресурса.
 
-Сопоставление названий — грубое, по первым `_STEM_LEN` символам каждого
-слова (не полноценная морфология), чтобы не терять совпадения из-за
-русских словоформ вроде "рулонный"/"рулонные", "материал"/"материалы".
+Сопоставление названий — грубое, по первым символам каждого слова (не
+полноценная морфология), чтобы не терять совпадения из-за русских
+словоформ вроде "рулонный"/"рулонные", "материал"/"материалы" —
+`text_matching.stem_words()`, с 2026-09-28 общий для этого модуля и
+`work_volume_extractor.py` (был локальным `_stems()` здесь же, вынесен при
+появлении второго потребителя той же логики).
 Итоговый список кандидатов — не решение агента: сортирован по цене и несёт
 видимый диапазон (`AbstractResourceCandidates.price_range`), а не один
 «самый дешёвый» вариант — окончательный выбор всегда за экспертом
@@ -30,19 +33,10 @@ parse_material_catalog_xml`, то есть те же данные, что `resou
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
 from .models import MaterialCandidateInfo
-
-_WORD_RE = re.compile(r"[а-яёa-z0-9]+", re.IGNORECASE)
-_STOPWORDS = {"и", "в", "с", "со", "на", "из", "для", "по", "к", "от", "не", "или", "при", "без"}
-_STEM_LEN = 5
-
-
-def _stems(text: str) -> set[str]:
-    words = (m.lower() for m in _WORD_RE.findall(text))
-    return {w[:_STEM_LEN] for w in words if len(w) >= 3 and w not in _STOPWORDS}
+from .text_matching import stem_words as _stems
 
 
 @dataclass
