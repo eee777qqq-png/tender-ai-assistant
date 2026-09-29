@@ -319,3 +319,94 @@ def test_search_material_candidates_pipe_pair_stays_an_honest_tie():
 
     by_code = {c.code: c for c in candidates}
     assert by_code["12.1.01.05-0070"].match_score == by_code["12.1.01.05-0062"].match_score == 1.0
+
+
+# --- Подкласс 1: однобуквенные/римские технические маркеры — 2026-09-29,
+# продолжение круга 2 (CLAUDE.md, «Остаточные, честно не устранённые
+# случаи», подкласс 1). Тот же класс проблемы, что и цифровые токены
+# (commit 9925660): маркер марки/типа/класса, записанный одной буквой
+# («Б», «А») или римским числом («I», «II»), отсекался тем же фильтром
+# `len(word) >= 3`, что раньше отсекал короткие числа. Проверено прогоном
+# на обоих реальных документах круга 2 целиком (не на 2 придуманных
+# примерах): однобуквенные маркеры сами по себе точность не меняли
+# (71,4%), римские числа сами по себе — 76,2%, вместе — 78,6% (лучший
+# результат из всех проверенных вариантов, включая F-score/Jaccard ниже).
+# Реализовано оба вместе. Названия ниже — реальные из каталога ФСБЦ.
+
+
+def test_search_material_candidates_separates_asphalt_type_b_from_type_a():
+    # Круг 2, Краснодар: «тип Б, марка II» vs «тип А, марка I»
+    # (04.2.01.01-0049/0046) — однобуквенный маркер марки ("б"/"а") и
+    # римское число класса ("ii"/"i") оба короче 3 символов, раньше
+    # отсекались фильтром длины и полностью исчезали из сравнения.
+    catalog = [
+        _material_item(
+            "04.2.01.01-0049",
+            "Смеси асфальтобетонные плотные мелкозернистые, тип Б, марка II",
+        ),
+        _material_item(
+            "04.2.01.01-0046",
+            "Смеси асфальтобетонные плотные мелкозернистые, тип А, марка I",
+        ),
+    ]
+
+    candidates = search_material_candidates(
+        catalog, "Смеси асфальтобетонные плотные мелкозернистые, тип Б, марка II"
+    )
+
+    by_code = {c.code: c for c in candidates}
+    assert by_code["04.2.01.01-0049"].match_score == 1.0
+    assert by_code["04.2.01.01-0049"].match_score > by_code["04.2.01.01-0046"].match_score
+
+
+def test_search_material_candidates_separates_sand_class_ii_from_class_i():
+    # Круг 2, МО: «I класс» vs «II класс» песка (02.3.01.02-1104/1118) —
+    # только римское число различает пару, ни одного другого отличающегося
+    # слова в названии.
+    catalog = [
+        _material_item(
+            "02.3.01.02-1118",
+            "Песок природный для строительных работ II класс, средний",
+        ),
+        _material_item(
+            "02.3.01.02-1104",
+            "Песок природный для строительных работ I класс, средний",
+        ),
+    ]
+
+    candidates = search_material_candidates(
+        catalog, "Песок природный для строительных работ II класс, средний"
+    )
+
+    by_code = {c.code: c for c in candidates}
+    assert by_code["02.3.01.02-1118"].match_score == 1.0
+    assert by_code["02.3.01.02-1118"].match_score > by_code["02.3.01.02-1104"].match_score
+
+
+def test_tokenize_words_keeps_single_letter_markers_not_in_stopwords():
+    from smeta_estimator.search import tokenize_words
+
+    tokens = tokenize_words("тип Б, марка II")
+    assert "б" in tokens
+    assert "ii" in tokens
+    # Предлоги-однобуквенные слова уже отсекаются стоп-листом, не длиной —
+    # поведение здесь не меняется этим фиксом.
+    assert "и" not in tokenize_words("шпильки и болты")
+
+
+def test_tokenize_words_recognizes_roman_numerals_up_to_common_range():
+    from smeta_estimator.search import tokenize_words
+
+    for roman in ("i", "ii", "iii", "iv", "v", "ix", "x"):
+        assert roman in tokenize_words(f"класс {roman}")
+
+
+def test_tokenize_words_does_not_confuse_roman_i_with_cyrillic_conjunction():
+    # Задача прямо просила проверить это: латинское "i" (римское число) и
+    # кириллическое "и" (союз "и") — разные символы Unicode, не должны
+    # путаться другом с другом ни в токенизации, ни в стоп-листе.
+    from smeta_estimator.search import tokenize_words
+
+    tokens = tokenize_words("класс I и болты")
+    assert "i" in tokens  # римское число осталось
+    assert "и" not in tokens  # союз по-прежнему отсекается стоп-листом
