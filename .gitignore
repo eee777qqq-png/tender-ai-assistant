@@ -29,3 +29,7 @@ src/real_client_profile.py
 # Скачанные вложения реальных тендеров (круг 2 бенчмарка Агента 4) — бинарные
 # файлы документации закупок, не нужны в истории git. См. scripts/fetch_round2_tenders.py.
 data/round2_attachments/
+
+*.txt
+data/downloaded_attachments/
+�����-*.xlsx

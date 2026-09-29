@@ -40,7 +40,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from .models import MachineLabourInfo, RateCandidate, RegionalPriceResult, ResourcePriceResolution
+from .models import (
+    MachineLabourInfo,
+    MaterialRateCandidate,
+    RateCandidate,
+    RegionalPriceResult,
+    ResourcePriceResolution,
+)
 from .regional_pricing_parser import GosrIndexEntry
 
 
@@ -163,6 +169,34 @@ def price_candidate_for_region(
         region_name=region_name, period_label=period_label, total_price=total, resolutions=resolutions
     )
     return replace(candidate, priced=priced)
+
+
+def price_material_candidate_for_region(
+    candidate: MaterialRateCandidate,
+    current_prices: dict[str, float],
+    gosr_index: dict[str, GosrIndexEntry],
+) -> MaterialRateCandidate:
+    """Региональная цена материала-кандидата — по тому же приоритету, что
+    и у одного ресурса внутри позиции ГЭСН (`resolve_resource_unit_price()`),
+    просто без разбивки на составляющие: материал сам себе единственный
+    ресурс. `unit_price=None` — цена не определилась (нет ни текущей цены,
+    ни индекса ГОСР для группы этого кода) — честно, не 0."""
+    resolution = resolve_resource_unit_price(
+        candidate.code, candidate.base_price_2022, current_prices, gosr_index
+    )
+    if resolution is None:
+        return replace(candidate, unit_price=None, price_source=None)
+    return replace(candidate, unit_price=resolution.unit_price, price_source=resolution.source)
+
+
+def price_material_candidates_for_region(
+    candidates: list[MaterialRateCandidate],
+    current_prices: dict[str, float],
+    gosr_index: dict[str, GosrIndexEntry],
+) -> list[MaterialRateCandidate]:
+    return [
+        price_material_candidate_for_region(c, current_prices, gosr_index) for c in candidates
+    ]
 
 
 def price_candidates_for_region(

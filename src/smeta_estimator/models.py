@@ -83,6 +83,27 @@ class MaterialCandidateInfo:
 
 
 @dataclass
+class MaterialRateCandidate:
+    """Один кандидат-материал из каталога ФСБЦ_Мат&Оборуд — параллель
+    `RateCandidate`, но для строк ведомости объёмов работ, которые по сути
+    материал/изделие, а не нормируемая работа (см. `search.
+    search_material_candidates()`, `estimate_smeta_document.py`).
+
+    Нет `resources` — материал сам себе единственный ресурс, не набор из
+    нескольких (в отличие от позиции ГЭСН). Региональная цена определяется
+    напрямую через `pricing.resolve_resource_unit_price()` по коду этого
+    материала, не по разбивке на составляющие."""
+
+    code: str
+    name: str
+    unit: str
+    match_score: float
+    base_price_2022: float
+    unit_price: float | None = None
+    price_source: str | None = None  # "current_price" | "gosr_index" | None (не определилась)
+
+
+@dataclass
 class MachineLabourInfo:
     """Трудозатраты машиниста на единицу машино-часа конкретной машины —
     из атрибутов `LabourMach`/`DriverCode` в ФСБЦ_Маш.xml (`fsnb_parser.

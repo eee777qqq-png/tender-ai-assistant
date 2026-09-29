@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='utf-8'?>
+<base><ResourcesDirectory><ResourceCategory Type="РЕМОНТНО-СТРОИТЕЛЬНЫЕ РАБОТЫ" CodePrefix="ГЭСНр"><Section Name="Земляные работы" Type="Сборник" Code="51"><Section Name="ЗЕМЛЯНЫЕ РАБОТЫ" Type="Раздел" Code="1"><Section Name="Разработка грунта внутри здания" Type="Таблица" Code="51-01-001">
+            <NameGroup BeginName="Разработка и обратная засыпка грунта вручную внутри здания в:">
+              <Work Code="51-01-001-01" EndName="котлованах глубиной до 3 м площадью до 10 м2" MeasureUnit="100 м3">
+                <Content>
+                  <Item Text="Разработка грунта вручную с зачисткой дна." />
+                  <Item Text="Устройство и разборка креплений." />
+                  <Item Text="Обратная засыпка грунта с трамбованием ручными трамбовками." />
+                  <Item Text="Удаление лишнего грунта." />
+                  <Item Text="Устройство ходов для ручных тележек." />
+                </Content>
+                <Resources>
+                  <Resource Code="1-100-20" EndName="Средний разряд работы 2,0" Quantity="667" />
+                  <Resource Code="2" Quantity="0.1" />
+                  <Resource Code="91.14.02-001" EndName="Автомобили бортовые, грузоподъемность до 5 т" Quantity="0.1" />
+                  <Resource Code="01.7.15.06-0111" EndName="Гвозди строительные" MeasureUnit="т" Quantity="0.005" />
+                  <Resource Code="11.1.02.01-0012" EndName="Лесоматериалы круглые хвойных пород окоренные, длина 3-6,5 м, диаметр 14-24 см, сорт I-III" MeasureUnit="м3" Quantity="0.85" />
+                  <Resource Code="11.1.03.05-0066" EndName="Доска необрезная хвойных пород, естественной влажности, длина 2-6,5 м, ширина 100-250, толщина 30-50 мм, сорт IV" MeasureUnit="м3" Quantity="1.7" />
+                </Resources>
+                <NrSp>
+                  <ReasonItem Nr="Пр/812-085.2" Sp="Пр/774-085.2" />
+                </NrSp>
+              </Work>
+            </NameGroup>
+          </Section></Section></Section></ResourceCategory></ResourcesDirectory></base>

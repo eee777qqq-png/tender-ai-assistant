@@ -31,6 +31,20 @@
   например «баннер»/индивидуальные материалы по счёту поставщика) и любые
   другие `unresolved_resource_codes` — считаются как 0 в позиции, честно
   показаны в выводе, не додуманы.
+- **Строки-материалы, не работы — с 2026-09-28 подбираются из двух
+  каталогов, не только из ГЭСН/ГЭСНр.** Найдено на реальных сметах: строки
+  вида «Уголок алюминиевый декоративный», «Светильник светодиодный...» —
+  по сути изделие/материал, не нормируемая работа, и поиск по каталогу
+  работ находил для них случайные, ничего не значащие совпадения (score
+  0.07–0.29). Теперь для каждой строки пробуются оба пути —
+  `search_candidates()` по ГЭСН/ГЭСНр и `search_material_candidates()` по
+  каталогу материалов ФСБЦ_Мат&Оборуд — и используется тот, у которого
+  выше `match_score` (`choose_candidate_source()`), не выбор каталога
+  заранее по эвристике вроде единицы измерения. Порог `MATCH_SCORE_THRESHOLD`
+  (0.5, подобран по фактическому распределению score на двух реальных
+  сметах, не с потолка — см. докстринг `search.py`) отсекает случай, когда
+  оба пути одинаково неуверенны: строка честно уходит в «кандидат не
+  найден», а не подставляется как «лучшее из плохого».
 - НР/СП/НДС этот скрипт не считает — это отдельная надстройка, не часть
   фундамента Агента 4 (см. CLAUDE.md, таблица агентов, Агент 4/5). Итог
   скрипта сравнивайте с «Прямые затраты» из сметы заказчика, не с
@@ -51,8 +65,10 @@ from pathlib import Path
 from document_analyst.table_reader import extract_xlsx_tables
 from smeta_estimator import (
     CURRENT_PERIOD_ID,
+    MATCH_SCORE_THRESHOLD,
     PILOT_PRICE_ZONES,
     apply_prices,
+    choose_candidate_source,
     download_fsnb_archive,
     extract_fsnb_files,
     extract_work_volume_rows,
@@ -65,15 +81,19 @@ from smeta_estimator import (
     parse_fsbc_materials_xml,
     parse_gesn_xml,
     parse_gosr_workbook,
+    parse_material_catalog_xml,
     parse_worker_salary_registry,
     price_candidates_for_region,
+    price_material_candidates_for_region,
     search_candidates,
+    search_material_candidates,
 )
 from smeta_estimator.fsnb_client import (
     ATTRIBUTION_NOTICE,
     FSBC_MACHINES_FILENAME,
     FSBC_MATERIALS_FILENAME,
     GESN_FILENAME,
+    GESNR_FILENAME,
 )
 
 
@@ -116,14 +136,26 @@ def main() -> int:
     print("\n=== Шаг 2: скачивание каталога ГЭСН/ФСБЦ (архив ФСНБ-2022) ===")
     print(f"  {ATTRIBUTION_NOTICE}")
     archive_files = extract_fsnb_files(download_fsnb_archive())
-    catalog = parse_gesn_xml(archive_files[GESN_FILENAME])
+    # ГЭСНр — ремонтно-строительные расценки — подключён к общему каталогу
+    # 2026-09-28 (см. CLAUDE.md): без него реальные позиции с приставкой
+    # "р" (капремонт/текущий ремонт — основной сегмент пилота) не находились
+    # вообще. Префикс кода читается из самого файла ГЭСНр.xml
+    # (`apply_code_prefix=True`), не зашит текстом здесь — иначе короткие
+    # коды вида "51-01-001-01" коллидировали бы с одноимёнными кодами
+    # основного ГЭСН при объединении в один список.
+    catalog = parse_gesn_xml(archive_files[GESN_FILENAME]) + parse_gesn_xml(
+        archive_files[GESNR_FILENAME], apply_code_prefix=True
+    )
     resource_base_prices = {
         **parse_fsbc_materials_xml(archive_files[FSBC_MATERIALS_FILENAME]),
         **parse_fsbc_machines_xml(archive_files[FSBC_MACHINES_FILENAME]),
     }
     apply_prices(catalog, resource_base_prices)
     machine_labour = parse_fsbc_machine_labour_xml(archive_files[FSBC_MACHINES_FILENAME])
-    print(f"  Позиций в каталоге ГЭСН: {len(catalog)}")
+    # Каталог материалов ФСБЦ — для строк ведомости, которые по сути
+    # материал/изделие, не нормируемая работа (см. докстринг выше).
+    material_catalog = parse_material_catalog_xml(archive_files[FSBC_MATERIALS_FILENAME])
+    print(f"  Позиций в каталоге ГЭСН+ГЭСНр: {len(catalog)}, материалов ФСБЦ: {len(material_catalog)}")
 
     print(f"\n=== Шаг 3: региональные цены и индексы ГОСР — {args.region}, период {args.period_id} ===")
     zone = PILOT_PRICE_ZONES[args.region]
@@ -143,43 +175,79 @@ def main() -> int:
     print(f"  Текущих цен/ставок по кодам: {len(current_prices)}, индексов ГОСР: {len(gosr_index)}")
 
     print("\n=== Шаг 4: подбор кандидатов и цена по каждой строке ===")
+    print(f"  (порог уверенности: {MATCH_SCORE_THRESHOLD:.2f} — см. докстринг search.py)")
     grand_total = 0.0
     unresolved_rows: list[str] = []
+    material_row_count = 0
 
     for row in rows:
         print(f"\n--- {row.name} ({row.unit}, количество {row.quantity}) ---")
-        candidates = search_candidates(catalog, row.name, top_n=args.top_n)
-        if not candidates:
-            print("  Кандидатов не найдено вообще — слов текста работы нет ни в одном названии ГЭСН.")
+        work_candidates = search_candidates(catalog, row.name, top_n=args.top_n)
+        material_candidates = search_material_candidates(material_catalog, row.name, top_n=args.top_n)
+        source = choose_candidate_source(work_candidates, material_candidates)
+
+        if source is None:
+            best = max(
+                (work_candidates[0].match_score if work_candidates else 0.0),
+                (material_candidates[0].match_score if material_candidates else 0.0),
+            )
+            reason = (
+                "слов текста работы нет ни в одном из двух каталогов"
+                if not work_candidates and not material_candidates
+                else f"лучший score ({best:.2f}) ниже порога уверенности {MATCH_SCORE_THRESHOLD:.2f}"
+            )
+            print(f"  Кандидатов не найдено вообще — {reason}.")
             unresolved_rows.append(row.name)
             continue
 
-        priced = price_candidates_for_region(
-            candidates,
-            region_name=args.region,
-            period_label=args.period_label,
-            current_prices=current_prices,
-            gosr_index=gosr_index,
-            resource_base_prices=resource_base_prices,
-            machine_labour=machine_labour,
-        )
-        for c in priced:
-            row_total = c.priced.total_price * row.quantity
-            unresolved = c.priced.unresolved_resource_codes or "нет"
-            print(
-                f"  {c.code} (score={c.match_score:.2f}): {c.name} [{c.unit}] — "
-                f"{c.priced.total_price:,.2f} руб./ед., на объём {row.quantity} -> "
-                f"{row_total:,.2f} руб. (unresolved: {unresolved})"
+        if source == "work":
+            priced = price_candidates_for_region(
+                work_candidates,
+                region_name=args.region,
+                period_label=args.period_label,
+                current_prices=current_prices,
+                gosr_index=gosr_index,
+                resource_base_prices=resource_base_prices,
+                machine_labour=machine_labour,
             )
+            for c in priced:
+                row_total = c.priced.total_price * row.quantity
+                unresolved = c.priced.unresolved_resource_codes or "нет"
+                print(
+                    f"  {c.code} (score={c.match_score:.2f}, каталог работ): {c.name} [{c.unit}] — "
+                    f"{c.priced.total_price:,.2f} руб./ед., на объём {row.quantity} -> "
+                    f"{row_total:,.2f} руб. (unresolved: {unresolved})"
+                )
+            top = priced[0]
+            top_price = top.priced.total_price
+        else:
+            material_row_count += 1
+            priced_materials = price_material_candidates_for_region(
+                material_candidates, current_prices=current_prices, gosr_index=gosr_index
+            )
+            for c in priced_materials:
+                if c.unit_price is None:
+                    print(
+                        f"  {c.code} (score={c.match_score:.2f}, каталог материалов): {c.name} "
+                        f"[{c.unit}] — цена не определена (unresolved)"
+                    )
+                    continue
+                row_total = c.unit_price * row.quantity
+                print(
+                    f"  {c.code} (score={c.match_score:.2f}, каталог материалов): {c.name} "
+                    f"[{c.unit}] — {c.unit_price:,.2f} руб./ед. ({c.price_source}), на объём "
+                    f"{row.quantity} -> {row_total:,.2f} руб."
+                )
+            top = priced_materials[0]
+            top_price = top.unit_price or 0.0
 
-        top = priced[0]
         if top.unit != row.unit:
             print(
                 f"  ⚠ Единица кандидата ({top.unit}) не совпадает дословно с единицей "
                 f"строки сметы ({row.unit}) — сумма ниже может быть в другом масштабе, "
                 "сверьте вручную."
             )
-        grand_total += top.priced.total_price * row.quantity
+        grand_total += top_price * row.quantity
 
     print(f"\n=== Итого по топ-кандидатам всех строк: {grand_total:,.2f} руб. ===")
     print(
@@ -187,6 +255,7 @@ def main() -> int:
         "не с «ВСЕГО по смете»; единицы измерения по строкам не сверялись — "
         "см. ограничения в докстринге скрипта)"
     )
+    print(f"Строк, для которых выбран каталог материалов (не работ): {material_row_count}")
     if unresolved_rows:
         print(f"\nСтроки без единого кандидата ({len(unresolved_rows)}):")
         for name in unresolved_rows:

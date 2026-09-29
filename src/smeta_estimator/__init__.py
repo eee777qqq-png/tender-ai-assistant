@@ -20,6 +20,7 @@ from .models import (
     GesnWorkItem,
     MachineLabourInfo,
     MaterialCandidateInfo,
+    MaterialRateCandidate,
     MatchResult,
     RateCandidate,
     RegionalPriceResult,
@@ -28,6 +29,8 @@ from .models import (
 from .pricing import (
     price_candidate_for_region,
     price_candidates_for_region,
+    price_material_candidate_for_region,
+    price_material_candidates_for_region,
     resolve_resource_unit_price,
 )
 from .regional_pricing_client import (
@@ -48,7 +51,13 @@ from .regional_pricing_parser import (
     parse_gosr_workbook,
     parse_worker_salary_registry,
 )
-from .search import search_candidates
+from .search import (
+    MATCH_SCORE_THRESHOLD,
+    choose_candidate_source,
+    search_candidates,
+    search_material_candidates,
+    tokenize_words,
+)
 from .version_watch import (
     FSNB_ARCHIVE_SOURCE_ID,
     FSNB_ARCHIVE_SOURCE_NAME,
@@ -81,8 +90,10 @@ __all__ = [
     "GesnResourceUsage",
     "GesnWorkItem",
     "GosrIndexEntry",
+    "MATCH_SCORE_THRESHOLD",
     "MachineLabourInfo",
     "MaterialCandidateInfo",
+    "MaterialRateCandidate",
     "MatchResult",
     "RateCandidate",
     "RegionalPriceResult",
@@ -97,6 +108,7 @@ __all__ = [
     "check_all_period_updates",
     "check_fsnb_archive_update",
     "check_period_update",
+    "choose_candidate_source",
     "download_fsnb_archive",
     "extract_fsnb_files",
     "extract_work_volume_rows",
@@ -122,9 +134,13 @@ __all__ = [
     "period_source_id",
     "price_candidate_for_region",
     "price_candidates_for_region",
+    "price_material_candidate_for_region",
+    "price_material_candidates_for_region",
     "resolve_resource_unit_price",
     "review_match_result",
     "search_candidates",
+    "search_material_candidates",
     "suggest_material_candidates",
     "suggest_work_volume_candidates",
+    "tokenize_words",
 ]

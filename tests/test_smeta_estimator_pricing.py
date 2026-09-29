@@ -10,8 +10,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pytest
 
-from smeta_estimator.models import GesnResourceUsage, MachineLabourInfo, RateCandidate
-from smeta_estimator.pricing import price_candidate_for_region, price_candidates_for_region
+from smeta_estimator.models import GesnResourceUsage, MachineLabourInfo, MaterialRateCandidate, RateCandidate
+from smeta_estimator.pricing import (
+    price_candidate_for_region,
+    price_candidates_for_region,
+    price_material_candidate_for_region,
+    price_material_candidates_for_region,
+)
 from smeta_estimator.regional_pricing_parser import GosrIndexEntry
 
 
@@ -215,3 +220,51 @@ def test_price_candidates_for_region_prices_every_candidate_in_the_list():
     )
 
     assert [c.priced.total_price for c in priced] == [10.0, 20.0]
+
+
+# --- price_material_candidate_for_region() — материал сам себе единственный
+# ресурс, та же логика приоритета, что у одного ресурса внутри позиции ГЭСН. ---
+
+
+def make_material_candidate(code: str = "A", base_price_2022: float = 50.0) -> MaterialRateCandidate:
+    return MaterialRateCandidate(
+        code=code, name="материал А", unit="шт", match_score=1.0, base_price_2022=base_price_2022
+    )
+
+
+def test_price_material_candidate_uses_current_price_when_available():
+    candidate = make_material_candidate()
+
+    priced = price_material_candidate_for_region(
+        candidate, current_prices={"A": 999.0}, gosr_index={}
+    )
+
+    assert priced.unit_price == pytest.approx(999.0)
+    assert priced.price_source == "current_price"
+
+
+def test_price_material_candidate_falls_back_to_base_price_times_gosr_index():
+    candidate = make_material_candidate(base_price_2022=50.0)
+    gosr_index = {"A": GosrIndexEntry("A", "материал А", "шт", base_price_2022=50.0, group_number=1, group_name="группа", index_value=3.0)}
+
+    priced = price_material_candidate_for_region(candidate, current_prices={}, gosr_index=gosr_index)
+
+    assert priced.unit_price == pytest.approx(150.0)
+    assert priced.price_source == "gosr_index"
+
+
+def test_price_material_candidate_is_honestly_unresolved_without_any_source():
+    candidate = make_material_candidate()
+
+    priced = price_material_candidate_for_region(candidate, current_prices={}, gosr_index={})
+
+    assert priced.unit_price is None
+    assert priced.price_source is None
+
+
+def test_price_material_candidates_for_region_prices_every_candidate_in_the_list():
+    candidates = [make_material_candidate("A"), make_material_candidate("A")]
+
+    priced = price_material_candidates_for_region(candidates, current_prices={"A": 10.0}, gosr_index={})
+
+    assert [c.unit_price for c in priced] == [10.0, 10.0]

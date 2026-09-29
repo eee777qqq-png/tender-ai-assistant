@@ -7,8 +7,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from smeta_estimator.fsnb_parser import apply_prices, parse_fsbc_machines_xml, parse_fsbc_materials_xml, parse_gesn_xml
-from smeta_estimator.search import search_candidates
+import pytest
+
+from smeta_estimator.fsnb_parser import (
+    apply_prices,
+    parse_fsbc_machines_xml,
+    parse_fsbc_materials_xml,
+    parse_gesn_xml,
+    parse_material_catalog_xml,
+)
+from smeta_estimator.models import MaterialRateCandidate, RateCandidate
+from smeta_estimator.search import choose_candidate_source, search_candidates, search_material_candidates
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -21,6 +30,10 @@ def load_roof_catalog():
     }
     apply_prices(items, prices)
     return items
+
+
+def load_material_catalog():
+    return parse_material_catalog_xml((FIXTURES / "fsbc_materials_sample.xml").read_bytes())
 
 
 def test_search_finds_roofing_candidates_for_a_work_item_from_the_krovlya_tender():
@@ -71,3 +84,77 @@ def test_search_respects_top_n_limit():
     candidates = search_candidates(catalog, "устройство кровель скатных рулонных материалов", top_n=2)
 
     assert len(candidates) <= 2
+
+
+# --- search_material_candidates() / choose_candidate_source() — 2026-09-28,
+# для строк ведомости объёмов работ, которые по сути материал, не работа
+# (найдено на реальных сметах — см. CLAUDE.md, estimate_smeta_document.py). ---
+
+
+def test_search_material_candidates_finds_exact_material_by_name():
+    catalog = load_material_catalog()
+
+    candidates = search_material_candidates(catalog, "Пропан-бутан смесь техническая")
+
+    assert candidates
+    assert candidates[0].code == "01.3.02.09-0022"
+    assert candidates[0].match_score == 1.0
+    assert candidates[0].base_price_2022 == pytest.approx(41.38)
+
+
+def test_search_material_candidates_returns_empty_for_unrelated_query():
+    catalog = load_material_catalog()
+
+    candidates = search_material_candidates(catalog, "устройство кровель скатных рулонных материалов")
+
+    assert candidates == []
+
+
+def test_search_material_candidates_uses_same_tokenizer_as_work_search():
+    """Оценка релевантности должна считаться одинаково в обоих каталогах —
+    иначе сравнение score между ними (`choose_candidate_source`) нечестное.
+    На реальном пересечении слов ("бутан смесь техническая" — 3 слова, оба
+    каталога дают долю 3/3) score должен совпасть дословно."""
+    material_catalog = load_material_catalog()
+    work_catalog = load_roof_catalog()
+
+    material_candidates = search_material_candidates(material_catalog, "бутан смесь техническая")
+    work_candidates = search_candidates(work_catalog, "бутан смесь техническая")
+
+    assert material_candidates
+    assert material_candidates[0].match_score == 1.0
+    assert work_candidates == []  # в каталоге работ этих слов нет вообще
+
+
+def test_choose_candidate_source_picks_the_higher_scoring_catalog():
+    work = [RateCandidate(code="w1", name="w", unit="шт", base_price=0.0, match_score=0.9)]
+    material = [MaterialRateCandidate(code="m1", name="m", unit="шт", match_score=0.6, base_price_2022=0.0)]
+
+    assert choose_candidate_source(work, material) == "work"
+
+
+def test_choose_candidate_source_prefers_material_when_it_scores_higher():
+    work = [RateCandidate(code="w1", name="w", unit="шт", base_price=0.0, match_score=0.55)]
+    material = [MaterialRateCandidate(code="m1", name="m", unit="шт", match_score=0.9, base_price_2022=0.0)]
+
+    assert choose_candidate_source(work, material) == "material"
+
+
+def test_choose_candidate_source_returns_none_when_both_empty():
+    assert choose_candidate_source([], []) is None
+
+
+def test_choose_candidate_source_returns_none_when_best_score_below_threshold():
+    # Оба пути нашли что-то, но неуверенно (ниже 0.5) — честный "не найдено",
+    # не выбор менее плохого из двух плохих вариантов.
+    work = [RateCandidate(code="w1", name="w", unit="шт", base_price=0.0, match_score=0.33)]
+    material = [MaterialRateCandidate(code="m1", name="m", unit="шт", match_score=0.29, base_price_2022=0.0)]
+
+    assert choose_candidate_source(work, material) is None
+
+
+def test_choose_candidate_source_respects_custom_threshold():
+    work = [RateCandidate(code="w1", name="w", unit="шт", base_price=0.0, match_score=0.4)]
+
+    assert choose_candidate_source(work, [], threshold=0.5) is None
+    assert choose_candidate_source(work, [], threshold=0.3) == "work"

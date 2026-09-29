@@ -22,6 +22,7 @@ from smeta_estimator.fsnb_client import (
     FSBC_MACHINES_FILENAME,
     FSBC_MATERIALS_FILENAME,
     GESN_FILENAME,
+    GESNR_FILENAME,
     download_fsnb_archive,
     extract_fsnb_files,
 )
@@ -89,18 +90,77 @@ def test_apply_prices_computes_base_price_and_flags_unresolved_resources():
     assert "01.2.03.03" in with_gravel.abstract_resource_codes
 
 
+# Тот же реальный код позиции ("51-01-001-01"), что и в
+# tests/fixtures/gesnr_sample.xml (Сборник 51 «Земляные работы»), но под
+# CodePrefix="ГЭСН" — минимальный придуманный фрагмент, воспроизводящий
+# структуру основного ГЭСН.xml, специально для демонстрации коллизии кодов
+# между базой и ГЭСНр без склейки каталогов из двух реальных архивов.
+_BASE_GESN_WITH_COLLIDING_CODE = """<?xml version='1.0' encoding='utf-8'?>
+<base><ResourcesDirectory><ResourceCategory Type="СТРОИТЕЛЬНЫЕ РАБОТЫ" CodePrefix="ГЭСН">
+  <Section Name="Земляные работы" Type="Сборник" Code="51">
+    <Section Name="ЗЕМЛЯНЫЕ РАБОТЫ" Type="Раздел" Code="1">
+      <Section Name="Разработка грунта внутри здания" Type="Таблица" Code="51-01-001">
+        <NameGroup BeginName="Разработка грунта механизированным способом внутри здания в:">
+          <Work Code="51-01-001-01" EndName="котлованах глубиной до 3 м" MeasureUnit="100 м3">
+            <Resources>
+              <Resource Code="91.01.01-001" EndName="Экскаваторы одноковшовые" Quantity="0.5" />
+            </Resources>
+          </Work>
+        </NameGroup>
+      </Section>
+    </Section>
+  </Section>
+</ResourceCategory></ResourcesDirectory></base>"""
+
+
+def test_parse_gesn_xml_without_prefix_flag_keeps_bare_code():
+    # Тот же файл ГЭСНр, но без apply_code_prefix — старое поведение
+    # доступно явно, не только для основного ГЭСН.xml.
+    items = parse_gesn_xml((FIXTURES / "gesnr_sample.xml").read_bytes())
+
+    assert items[0].code == "51-01-001-01"
+
+
+def test_parse_gesn_xml_applies_code_prefix_read_from_xml_not_hardcoded():
+    items = parse_gesn_xml((FIXTURES / "gesnr_sample.xml").read_bytes(), apply_code_prefix=True)
+
+    assert len(items) == 1
+    assert items[0].code == "ГЭСНр51-01-001-01"
+    assert "Разработка и обратная засыпка грунта" in items[0].name
+
+
+def test_gesnr_code_does_not_collide_with_same_bare_code_in_base_gesn():
+    base_items = parse_gesn_xml(_BASE_GESN_WITH_COLLIDING_CODE.encode("utf-8"))
+    gesnr_items = parse_gesn_xml((FIXTURES / "gesnr_sample.xml").read_bytes(), apply_code_prefix=True)
+
+    combined = base_items + gesnr_items
+    codes = [item.code for item in combined]
+
+    # Оба кода в объединённом каталоге, оба различимы — не один код "51-01-001-01",
+    # перезаписавший другой при склейке в общий список/словарь по коду.
+    assert "51-01-001-01" in codes
+    assert "ГЭСНр51-01-001-01" in codes
+    assert len(set(codes)) == 2
+
+    by_code = {item.code: item for item in combined}
+    assert "механизированным способом" in by_code["51-01-001-01"].name
+    assert "вручную" in by_code["ГЭСНр51-01-001-01"].name
+
+
 def test_extract_fsnb_files_returns_expected_members():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(GESN_FILENAME, b"<base/>")
+        zf.writestr(GESNR_FILENAME, b"<base-r/>")
         zf.writestr(FSBC_MATERIALS_FILENAME, b"<x/>")
         zf.writestr(FSBC_MACHINES_FILENAME, b"<y/>")
         zf.writestr("ГЭСНм.xml", b"<z/>")  # лишний файл — должен быть проигнорирован
 
     files = extract_fsnb_files(buf.getvalue())
 
-    assert set(files) == {GESN_FILENAME, FSBC_MATERIALS_FILENAME, FSBC_MACHINES_FILENAME}
+    assert set(files) == {GESN_FILENAME, GESNR_FILENAME, FSBC_MATERIALS_FILENAME, FSBC_MACHINES_FILENAME}
     assert files[GESN_FILENAME] == b"<base/>"
+    assert files[GESNR_FILENAME] == b"<base-r/>"
 
 
 def test_extract_fsnb_files_raises_when_archive_is_missing_expected_files():

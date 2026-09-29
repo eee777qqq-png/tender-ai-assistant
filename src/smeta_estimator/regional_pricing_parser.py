@@ -69,6 +69,19 @@ def parse_worker_salary_registry(raw_json: bytes | str) -> dict[str, float]:
     }
 
 
+def _parse_gosr_float(raw: object, default: float) -> float:
+    """Числовая ячейка отчёта ГОСР — обычно число или пусто (`None`), но на
+    реальных выгрузках (найдено 2026-09-28 на реальном документе закупки,
+    не на придуманной фикстуре) встречается и литеральный прочерк `"-"` —
+    та же семантика "нет значения", что и `None`, просто выражена текстом,
+    не пустой ячейкой."""
+    if raw is None:
+        return default
+    if isinstance(raw, str) and raw.strip() in ("", "-"):
+        return default
+    return float(raw)
+
+
 def parse_gosr_workbook(xlsx_bytes: bytes) -> dict[str, GosrIndexEntry]:
     """Оба листа отчёта (материалы/изделия/оборудование — лист 1, машины и
     механизмы — лист 2) имеют одинаковую структуру столбцов: код, название,
@@ -92,10 +105,10 @@ def parse_gosr_workbook(xlsx_bytes: bytes) -> dict[str, GosrIndexEntry]:
                 resource_code=code,
                 resource_name=row[1] or "",
                 unit=row[2] or "",
-                base_price_2022=float(row[3]) if row[3] is not None else 0.0,
+                base_price_2022=_parse_gosr_float(row[3], 0.0),
                 group_number=int(row[4]) if row[4] is not None else 0,
                 group_name=row[5] or "",
-                index_value=float(row[6]) if row[6] is not None else 1.0,
+                index_value=_parse_gosr_float(row[6], 1.0),
             )
     return entries
 

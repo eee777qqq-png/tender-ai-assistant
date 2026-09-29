@@ -39,6 +39,18 @@ _QUANTITY_HEADER_WORDS = ("количество", "кол-во", "кол во", 
 # десятичным разделителем — "1 234,5", "1234.5", "250".
 _NUMBER_RE = re.compile(r"^[\d\s]+([.,]\d+)?$")
 
+# Маркеры колонки "№ п/п" в заголовке — найдено на реальной смете
+# (ГРАНД-Смета): в ней вложенные строки ресурсов/труда/накладных расходов
+# внутри позиции (например, "Средний разряд работы 3,0", "НР Крыши, кровли")
+# формально проходят фильтр "наименование|ед.изм|количество", но эта колонка
+# у них ПУСТАЯ — заполнена только у настоящих пронумерованных позиций сметы
+# (включая дробные подпозиции вида "4.1", "9.1" — доп. затраты внутри
+# позиции, у которых уже указан явный порядковый номер).
+_POSITION_HEADER_MARKERS = ("№", "п/п")
+
+# Целое число или дробная подпозиция вида "4.1", "9.1" (позиция.подпозиция).
+_POSITION_NUMBER_RE = re.compile(r"^\d+(\.\d+)?$")
+
 
 @dataclass
 class WorkVolumeRow:
@@ -64,11 +76,14 @@ def _parse_quantity(raw: str) -> float | None:
         return None
 
 
-def _find_header(row: list[str]) -> tuple[int, int, int] | None:
-    """Индексы колонок (наименование, ед.изм., количество) в строке-
+def _find_header(row: list[str]) -> tuple[int, int, int, int | None] | None:
+    """Индексы колонок (наименование, ед.изм., количество, № п/п) в строке-
     заголовке, или `None`, если строка не похожа на заголовок такой
-    таблицы (не хватает хотя бы одной из трёх колонок)."""
-    name_idx = unit_idx = qty_idx = None
+    таблицы (не хватает хотя бы одной из первых трёх колонок). Колонка
+    "№ п/п" — необязательная (`None`, если в заголовке не нашлась): без неё
+    поведение прежнее, без фильтра по номеру позиции (нужно для таблиц без
+    такой колонки вообще — см. тесты на придуманных таблицах)."""
+    name_idx = unit_idx = qty_idx = pos_idx = None
     for i, cell in enumerate(row):
         low = cell.lower()
         if name_idx is None and all(w in low for w in _NAME_HEADER_WORDS):
@@ -77,9 +92,11 @@ def _find_header(row: list[str]) -> tuple[int, int, int] | None:
             unit_idx = i
         if qty_idx is None and any(w in low for w in _QUANTITY_HEADER_WORDS):
             qty_idx = i
+        if pos_idx is None and any(w in low for w in _POSITION_HEADER_MARKERS):
+            pos_idx = i
     if name_idx is None or unit_idx is None or qty_idx is None:
         return None
-    return name_idx, unit_idx, qty_idx
+    return name_idx, unit_idx, qty_idx, pos_idx
 
 
 def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
@@ -88,22 +105,49 @@ def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
     ней, пока строка ещё содержит распознаваемое число в колонке
     количества. Таблица без такого заголовка — пропускается целиком, не
     считается ошибкой (в документации закупки обычно есть и другие
-    таблицы — например, график исполнения, не ведомость объёмов)."""
+    таблицы — например, график исполнения, не ведомость объёмов).
+
+    Когда в заголовке нашлась колонка "№ п/п" — дополнительно отсеивает
+    строки без настоящего порядкового номера позиции в этой колонке (целое
+    число или дробная подпозиция вида "4.1"). Это отсекает вложенные строки
+    ресурсов/труда/материалов и накладных расходов внутри позиции (у них
+    эта колонка пустая) — найдено на реальной смете (ГРАНД-Смета), где без
+    этого фильтра такие строки принимались за самостоятельные позиции
+    работ и искажали итог в сотни раз (см. CLAUDE.md). Без такой колонки в
+    заголовке — фильтр не применяется (обратная совместимость с таблицами,
+    где номера позиций не выделены отдельной колонкой)."""
     rows: list[WorkVolumeRow] = []
     for table_index, table in enumerate(tables):
-        header_cols: tuple[int, int, int] | None = None
+        header_cols: tuple[int, int, int, int | None] | None = None
         for row_index, row in enumerate(table):
             if header_cols is None:
                 header_cols = _find_header(row)
                 continue
 
-            name_idx, unit_idx, qty_idx = header_cols
+            name_idx, unit_idx, qty_idx, pos_idx = header_cols
             if max(name_idx, unit_idx, qty_idx) >= len(row):
                 continue
+
+            if pos_idx is not None:
+                position = row[pos_idx].strip() if pos_idx < len(row) else ""
+                if not _POSITION_NUMBER_RE.match(position):
+                    # Нет настоящего номера позиции в этой колонке — строка
+                    # ресурса/труда/накладных расходов внутри позиции, не
+                    # самостоятельная работа. Пропускаем, не гадаем.
+                    continue
 
             name = row[name_idx].strip()
             unit = row[unit_idx].strip()
             quantity = _parse_quantity(row[qty_idx])
+
+            if _POSITION_NUMBER_RE.match(name):
+                # Название — голое число, не текст: строка-легенда номеров
+                # столбцов ("1 | 2 | 3 | 4 | ..."), которую ГРАНД-Смета
+                # печатает сразу под заголовком — у неё в колонке № п/п
+                # тоже случайно оказывается валидный номер позиции ("1"),
+                # но настоящее название работы никогда не бывает голым
+                # числом. Найдено на реальной смете.
+                continue
 
             if not name or not unit or quantity is None:
                 # Честно пропускаем — это может быть итоговая строка

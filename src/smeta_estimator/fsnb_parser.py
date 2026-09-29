@@ -33,15 +33,35 @@ from xml.etree import ElementTree as ET
 from .models import GesnResourceUsage, GesnWorkItem, MachineLabourInfo, MaterialCandidateInfo
 
 
-def parse_gesn_xml(xml_bytes: bytes) -> list[GesnWorkItem]:
+def parse_gesn_xml(xml_bytes: bytes, apply_code_prefix: bool = False) -> list[GesnWorkItem]:
+    """`apply_code_prefix=True` — читает `CodePrefix` из самого XML
+    (`<ResourceCategory CodePrefix="...">`, например `"ГЭСНр"` для файла
+    ремонтно-строительных расценок) и приклеивает его к `Work.Code`.
+
+    По умолчанию `False` — коды остаются как в файле (`"12-01-001-01"`),
+    что и нужно для основного `ГЭСН.xml`: в реальных сметах базовые позиции
+    записываются без префикса. Для `ГЭСНр.xml` префикс обязателен — иначе
+    его короткие коды (`"51-01-001-01"`) коллидируют с одноимёнными кодами
+    основного ГЭСН при объединении в общий каталог (см. CLAUDE.md,
+    "Известные пробелы", про подключение ГЭСНр). Значение префикса
+    берётся из атрибута файла, а не зашивается в код текстом — так подход
+    переносится и на другие своды (ГЭСНм/мр/п) без правки этой функции."""
     root = ET.fromstring(xml_bytes)
+    code_prefix = ""
+    if apply_code_prefix:
+        category_el = root.find(".//ResourceCategory")
+        code_prefix = category_el.get("CodePrefix", "") if category_el is not None else ""
     items: list[GesnWorkItem] = []
-    _collect_work_items(root, table_name="", begin_name="", items=items)
+    _collect_work_items(root, table_name="", begin_name="", code_prefix=code_prefix, items=items)
     return items
 
 
 def _collect_work_items(
-    element: ET.Element, table_name: str, begin_name: str, items: list[GesnWorkItem]
+    element: ET.Element,
+    table_name: str,
+    begin_name: str,
+    code_prefix: str,
+    items: list[GesnWorkItem],
 ) -> None:
     """Обходит дерево `<Section>` сверху вниз, донося вниз название текущей
     «Таблица» и текущего `NameGroup.BeginName» — контекст, из которого
@@ -49,7 +69,7 @@ def _collect_work_items(
     которую stdlib `ElementTree` не поддерживает) название собирается по
     пути вниз, а не поиском вверх от `<Work>`."""
     if element.tag == "Work":
-        items.append(_build_work_item(element, table_name, begin_name))
+        items.append(_build_work_item(element, table_name, begin_name, code_prefix))
         return
 
     next_table_name = table_name
@@ -61,10 +81,12 @@ def _collect_work_items(
         next_begin_name = element.get("BeginName", "")
 
     for child in element:
-        _collect_work_items(child, next_table_name, next_begin_name, items)
+        _collect_work_items(child, next_table_name, next_begin_name, code_prefix, items)
 
 
-def _build_work_item(work_el: ET.Element, table_name: str, begin_name: str) -> GesnWorkItem:
+def _build_work_item(
+    work_el: ET.Element, table_name: str, begin_name: str, code_prefix: str
+) -> GesnWorkItem:
     resources: list[GesnResourceUsage] = []
     resources_el = work_el.find("Resources")
     if resources_el is not None:
@@ -87,7 +109,7 @@ def _build_work_item(work_el: ET.Element, table_name: str, begin_name: str) -> G
                 )
             )
     return GesnWorkItem(
-        code=work_el.get("Code", ""),
+        code=f"{code_prefix}{work_el.get('Code', '')}",
         name=_compose_name(table_name, begin_name, work_el.get("EndName", "")),
         unit=work_el.get("MeasureUnit", ""),
         resources=resources,
