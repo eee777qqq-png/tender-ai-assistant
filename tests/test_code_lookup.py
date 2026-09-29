@@ -43,6 +43,37 @@ def test_normalize_empty_string_gives_empty_string():
     assert normalize_gesn_code("   ") == ""
 
 
+def test_normalize_strips_fsbc_prefix():
+    # Найдено на реальном документе круга 1 (roof, №0373100025626000005):
+    # ГРАНД-Смета пишет в "Обосновании" материала код с приставкой
+    # "ФСБЦ-", которую каталог материалов не хранит вообще — до фикса
+    # ни один материал с этой приставкой не находился точным поиском.
+    assert normalize_gesn_code("ФСБЦ-11.1.03.01-0065") == "11.1.03.01-0065"
+
+
+def test_normalize_drops_footnote_after_newline():
+    # Найдено там же: ячейка иногда содержит перенос строки с названием
+    # файла-источника цены после кода ("...\nСплит-форма город Москва на
+    # 3 квартал 2026 года.xlsx") — раньше это склеивалось в мусорный токен.
+    raw = "ФСБЦ-11.1.03.01-0065\nСплит-форма город Москва на 3 квартал 2026 года.xlsx"
+    assert normalize_gesn_code(raw) == "11.1.03.01-0065"
+
+
+def test_find_exact_material_candidate_matches_real_fsbc_code_with_footnote():
+    catalog = [
+        MaterialCandidateInfo(
+            code="11.1.03.01-0065",
+            name="Брус обрезной хвойных пород",
+            unit="м3",
+            price=16655.0,
+        ),
+    ]
+    raw = "ФСБЦ-11.1.03.01-0065\nСплит-форма город Москва на 3 квартал 2026 года.xlsx"
+    found = find_exact_material_candidate(catalog, raw)
+    assert found is not None
+    assert found.code == "11.1.03.01-0065"
+
+
 def _work_catalog():
     return [
         GesnWorkItem(code="01-02-057-02", name="Разборка покрытий", unit="100 м2"),
