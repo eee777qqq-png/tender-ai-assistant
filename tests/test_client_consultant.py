@@ -8,7 +8,7 @@ import pytest
 
 from classifier import ConstructionClassifier, coarse_classify
 from classifier.sample_tenders import SAMPLE_TENDERS
-from client_consultant import build_client_summary, render_summary_text
+from client_consultant import MARKET_PRICE_DISCLAIMER, build_client_summary, render_summary_text
 from completeness_check import check_completeness
 from document_analyst import extract_requirements
 from document_analyst.sample_documents import SAMPLE_DOCUMENTS
@@ -301,6 +301,10 @@ def test_summary_includes_profitability_when_provided():
     assert "маржа" in summary.profitability.margin_explanation.lower()
     assert summary.profitability.risk_flags == profitability.risk_flags
     assert summary.profitability.win_probability_note == profitability.win_probability_note
+    # CLAUDE.md, открытый п.18 (пункт «а», 2026-09-29): оговорка про
+    # нормативные vs рыночные цены обязательна, не опциональна.
+    assert "нормативных" in summary.profitability.market_price_disclaimer.lower()
+    assert "рыночных" in summary.profitability.market_price_disclaimer.lower()
 
 
 def test_summary_omits_profitability_section_when_not_provided():
@@ -331,6 +335,9 @@ def test_summary_handles_margin_none_honestly_not_as_missing_data():
     assert summary.profitability.margin is None
     assert "не удалось посчитать" in summary.profitability.margin_explanation
     assert any("уточнения с бухгалтером" in f for f in summary.profitability.risk_flags)
+    # Оговорка про нормативные/рыночные цены — обязательна всегда, когда
+    # profitability передан, даже если саму маржу посчитать не удалось.
+    assert summary.profitability.market_price_disclaimer
 
 
 def test_rejects_profitability_for_a_different_tender():
@@ -356,3 +363,18 @@ def test_render_summary_text_shows_margin_and_risk_flags():
     for flag in profitability.risk_flags:
         assert flag in text
     assert profitability.win_probability_note in text
+
+
+def test_render_summary_text_always_includes_market_price_disclaimer():
+    """CLAUDE.md, открытый п.18 (пункт «а», 2026-09-29): сметная маржа
+    посчитана по нормативным (ФСНБ-2022) ценам, не по рыночным — оговорка
+    об этом обязана выводиться рядом с блоком «Ожидаемая выгода» всегда,
+    когда profitability передан, а не быть опциональным текстом."""
+    profile = make_ready_profile()
+    match, completeness, package, extracted = run_pipeline(profile, "0173200001426000101")
+    profitability = run_profitability(profile, "0173200001426000101", extracted)
+    summary = build_client_summary(match, completeness, package, profitability)
+
+    text = render_summary_text(summary)
+
+    assert MARKET_PRICE_DISCLAIMER in text

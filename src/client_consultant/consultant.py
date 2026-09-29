@@ -145,6 +145,14 @@ def _translate_risk(risk: HiddenRisk) -> PlainRisk:
     )
 
 
+MARKET_PRICE_DISCLAIMER = (
+    "Расчёт основан на нормативных сметных ценах (ФСНБ-2022 + региональный "
+    "индекс), не на реальных рыночных. Если закупочные цены на рынке выше "
+    "нормативных — фактическая прибыль будет ниже; если ниже — маржа может "
+    "быть больше расчётной."
+)
+
+
 def _translate_profitability(profitability: ProfitabilityEstimate) -> ProfitabilitySummary:
     if profitability.margin is not None:
         formatted = f"{profitability.margin:,.0f}".replace(",", " ")
@@ -160,6 +168,7 @@ def _translate_profitability(profitability: ProfitabilityEstimate) -> Profitabil
     return ProfitabilitySummary(
         margin=profitability.margin,
         margin_explanation=margin_explanation,
+        market_price_disclaimer=MARKET_PRICE_DISCLAIMER,
         risk_flags=list(profitability.risk_flags),
         win_probability_note=profitability.win_probability_note,
     )
@@ -322,6 +331,7 @@ def render_summary_text(summary: ClientSummary) -> str:
 
     if summary.profitability is not None:
         lines.append(f"3. Ожидаемая выгода: {summary.profitability.margin_explanation}")
+        lines.append(f"   ⚠ {summary.profitability.market_price_disclaimer}")
         for flag in summary.profitability.risk_flags:
             lines.append(f"   - {flag}")
         if summary.profitability.win_probability_note:

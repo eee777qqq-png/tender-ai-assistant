@@ -38,6 +38,14 @@ class ProfitabilitySummary:
 
     margin: float | None  # None — маржу посчитать не удалось, см. risk_flags почему
     margin_explanation: str
+    # Обязательная оговорка про источник цены (CLAUDE.md, открытый п.18,
+    # пункт «а», 2026-09-29) — сметная себестоимость посчитана по нормативным
+    # ценам (ФСНБ-2022 + региональный индекс), не по реальным рыночным. Без
+    # значения по умолчанию нарочно — `_translate_profitability()` обязана
+    # передать её явно (`consultant.MARKET_PRICE_DISCLAIMER`), а не оставить
+    # пустой строкой: маржа без этой оговорки не должна попадать в сводку
+    # клиенту ни при каких обстоятельствах.
+    market_price_disclaimer: str
     risk_flags: list[str] = field(default_factory=list)
     win_probability_note: str = ""
 
