@@ -39,6 +39,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from eis_client.client import EISClient  # noqa: E402
@@ -62,6 +64,7 @@ def _find_purchase_number(xml_bytes: bytes, wanted: str) -> bool:
 
 
 def main() -> None:
+    load_dotenv()
     config = EISConfig.from_env()
     remaining = dict(TARGETS)
 
