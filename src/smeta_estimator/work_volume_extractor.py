@@ -60,6 +60,27 @@ _CODE_HEADER_WORDS = ("обоснование",)
 # Целое число или дробная подпозиция вида "4.1", "9.1" (позиция.подпозиция).
 _POSITION_NUMBER_RE = re.compile(r"^\d+(\.\d+)?$")
 
+# Маркер под-заголовка колонки "…всего с учётом коэффициентов" — найдено на
+# реальной смете (тендер №0337100017726000160, круг 2 бенчмарка, 2026-09-29,
+# см. CLAUDE.md открытый п.17): у дробных подпозиций вида "4.1"/"9.1"
+# (материал, вынесенный отдельной строкой из состава родительской позиции
+# ГЭСН) колонка "Количество" хранит НОРМУ расхода на единицу измерения
+# родительской позиции (например, 126 м3 щебня на 100 м3 родительской
+# позиции), а не реальную потребность — реальная потребность (126×0,0994=
+# 12,5244 м3) лежит в СОСЕДНЕЙ колонке "всего с учётом коэффициентов",
+# отдельной от "Количество" в реальном ЛСР (второй заголовочный ряд под
+# основным). Без учёта этого столбца сумма по такой строке завышается
+# (или занижается — если объём родителя больше 1) в разы: на щебне и
+# песке этого документа завышение дало +148 448 ₽ и +104 507 ₽
+# соответственно — вместе больше половины всего расхождения круга 2 для
+# этой сметы. Только "количество" в заголовке — "коэффициент" здесь не
+# входит в общий _QUANTITY_HEADER_WORDS специально, чтобы не путать эту
+# колонку с обычной колонкой количества у таблиц без такого разделения.
+# Оба слова обязательны вместе — у реального ЛСР рядом есть ещё и колонка
+# "коэффициенты" сама по себе (просто множитель, не итоговое количество),
+# её одно слово "коэффициент" без "всего" не отличило бы от нужной.
+_QUANTITY_SCALED_HEADER_WORDS = ("всего", "коэффициент")
+
 
 @dataclass
 class WorkVolumeRow:
@@ -117,6 +138,21 @@ def _find_header(row: list[str]) -> tuple[int, int, int, int | None, int | None]
     return name_idx, unit_idx, qty_idx, pos_idx, code_idx
 
 
+def _find_quantity_scaled_column(row: list[str], qty_idx: int) -> int | None:
+    """Ищет колонку "…всего с учётом коэффициентов" в под-заголовочной
+    строке (второй заголовочный ряд реального ЛСР, идущий сразу под
+    основным "Наименование работ | Ед. изм. | Количество…") — только среди
+    колонок правее самой "Количество" (`qty_idx`), тот же участок таблицы,
+    где реально лежит эта колонка. Не находит — возвращает `None`, ничего
+    не меняется в поведении (обратная совместимость с таблицами без
+    такого разделения)."""
+    for i in range(qty_idx, len(row)):
+        low = row[i].lower()
+        if all(w in low for w in _QUANTITY_SCALED_HEADER_WORDS):
+            return i
+    return None
+
+
 def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
     """Сканирует каждую таблицу в поисках строки-заголовка вида
     "Наименование работ | Ед. изм. | Количество" и разбирает строки под
@@ -133,19 +169,42 @@ def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
     этого фильтра такие строки принимались за самостоятельные позиции
     работ и искажали итог в сотни раз (см. CLAUDE.md). Без такой колонки в
     заголовке — фильтр не применяется (обратная совместимость с таблицами,
-    где номера позиций не выделены отдельной колонкой)."""
+    где номера позиций не выделены отдельной колонкой).
+
+    **Дробные подпозиции ("4.1", "9.1") — количество берётся из колонки
+    "…всего с учётом коэффициентов", если она нашлась в под-заголовке, не
+    из "Количество".** Найдено на реальном ЛСР (круг 2 бенчмарка, тендер
+    №0337100017726000160, 2026-09-29): у такой строки "Количество" — это
+    НОРМА расхода материала на единицу измерения родительской позиции
+    (например, 126 м3 щебня на "100 м3" щебёночного основания), а не
+    реальная потребность по документу; реальная потребность равна этой
+    норме, умноженной на объём родительской позиции, и уже посчитана
+    составителем сметы в соседней колонке. Применяется только когда: (а)
+    номер позиции строки — дробный ("N.M"), (б) непосредственно
+    предшествующая целочисленная позиция ("N") — её объём НЕ целое число
+    (у целого объёма родителя эффект отсутствия коэффициента либо нулевой,
+    либо неотличим от опечатки — безопаснее не трогать), и (в) сама
+    колонка с коэффициентами нашлась и содержит распознаваемое число для
+    этой строки. Не нашлось — берётся прежнее поведение (колонка
+    "Количество" как есть)."""
     rows: list[WorkVolumeRow] = []
     for table_index, table in enumerate(tables):
         header_cols: tuple[int, int, int, int | None, int | None] | None = None
+        qty_scaled_idx: int | None = None
+        parent_position: str | None = None
+        parent_quantity: float | None = None
         for row_index, row in enumerate(table):
             if header_cols is None:
                 header_cols = _find_header(row)
+                if header_cols is not None and row_index + 1 < len(table):
+                    qty_scaled_idx = _find_quantity_scaled_column(table[row_index + 1], header_cols[2])
                 continue
 
             name_idx, unit_idx, qty_idx, pos_idx, code_idx = header_cols
             if max(name_idx, unit_idx, qty_idx) >= len(row):
                 continue
 
+            position = ""
             if pos_idx is not None:
                 position = row[pos_idx].strip() if pos_idx < len(row) else ""
                 if not _POSITION_NUMBER_RE.match(position):
@@ -172,6 +231,22 @@ def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
                 # ("Итого"), пустая строка-разделитель, или формат, который
                 # этот разбор не распознаёт. Не подставляем 0.
                 continue
+
+            is_child_position = "." in position
+            if not is_child_position:
+                parent_position = position or None
+                parent_quantity = quantity
+            elif (
+                qty_scaled_idx is not None
+                and parent_quantity is not None
+                and parent_position is not None
+                and position.split(".", 1)[0] == parent_position
+                and not parent_quantity.is_integer()
+                and qty_scaled_idx < len(row)
+            ):
+                scaled_quantity = _parse_quantity(row[qty_scaled_idx])
+                if scaled_quantity is not None:
+                    quantity = scaled_quantity
 
             code = None
             if code_idx is not None and code_idx < len(row):
