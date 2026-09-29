@@ -25,3 +25,7 @@ src/real_client_profile.py
 # вне git: .smetrix-local/. См. CLAUDE.md, открытый пункт про сравнение с
 # Сметриксом.
 .smetrix-local/
+
+# Скачанные вложения реальных тендеров (круг 2 бенчмарка Агента 4) — бинарные
+# файлы документации закупок, не нужны в истории git. См. scripts/fetch_round2_tenders.py.
+data/round2_attachments/
