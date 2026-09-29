@@ -77,6 +77,7 @@ from smeta_estimator import (
     fetch_worker_salary_registry,
     find_exact_material_candidate,
     find_exact_work_candidate,
+    normalize_gesn_code,
     parse_current_prices_json,
     parse_fsbc_machine_labour_xml,
     parse_fsbc_machines_xml,
@@ -124,6 +125,19 @@ def main() -> int:
             "(код/название/количество/цена/источник цены — current_price/gosr_index/"
             "unresolved) — для диагностики подозрительно больших сумм по работе, "
             "не только по материалам (см. CLAUDE.md, открытый п.17, «Находка 5»)."
+        ),
+    )
+    parser.add_argument(
+        "--force-text-search",
+        action="store_true",
+        help=(
+            "Диагностический режим (не меняет прод-поведение без флага): точный "
+            "поиск по коду из «Обоснования» пропускается ВСЕГДА, даже когда код "
+            "распознан — сразу текстовый поиск. row.code при этом не участвует в "
+            "поиске, только сверяется с топ-1 результатом текстового поиска "
+            "(по коду, после normalize_gesn_code()) для измерения точности "
+            "text search без точного кода. В конце — отдельный отчёт "
+            "«% совпадений», см. CLAUDE.md."
         ),
     )
     args = parser.parse_args()
@@ -195,6 +209,12 @@ def main() -> int:
 
     exact_code_row_count = 0
 
+    # Диагностика точности текстового поиска без точного кода — только под
+    # --force-text-search, не влияет на прод-путь без флага (см. докстринг
+    # аргумента выше и CLAUDE.md).
+    diag_known_code_rows = 0
+    diag_text_search_correct = 0
+
     for row in rows:
         print(f"\n--- {row.name} ({row.unit}, количество {row.quantity}) ---")
 
@@ -207,7 +227,7 @@ def main() -> int:
         work_candidates: list[RateCandidate] = []
         material_candidates: list[MaterialRateCandidate] = []
 
-        if row.code:
+        if row.code and not args.force_text_search:
             exact_work = find_exact_work_candidate(catalog, row.code)
             if exact_work is not None:
                 work_candidates = [
@@ -247,6 +267,27 @@ def main() -> int:
             work_candidates = search_candidates(catalog, row.name, top_n=args.top_n)
             material_candidates = search_material_candidates(material_catalog, row.name, top_n=args.top_n)
             source = choose_candidate_source(work_candidates, material_candidates)
+
+        # Диагностика --force-text-search: row.code — эталон (известный
+        # правильный код из «Обоснования»), НЕ используется для поиска в
+        # этом режиме (см. строку с `not args.force_text_search` выше) —
+        # только для сверки с тем, что реально нашёл текстовый поиск.
+        if args.force_text_search and row.code:
+            expected_code = normalize_gesn_code(row.code)
+            if expected_code:
+                diag_known_code_rows += 1
+                top1_code = None
+                if source == "work" and work_candidates:
+                    top1_code = work_candidates[0].code
+                elif source == "material" and material_candidates:
+                    top1_code = material_candidates[0].code
+                guessed = top1_code is not None and normalize_gesn_code(top1_code) == expected_code
+                if guessed:
+                    diag_text_search_correct += 1
+                print(
+                    f"  [диагностика] эталон «{expected_code}», топ-1 текстового поиска "
+                    f"«{top1_code or '—'}» — {'СОВПАЛО' if guessed else 'не совпало'}"
+                )
 
         if source is None:
             best = max(
@@ -367,6 +408,18 @@ def main() -> int:
     )
     print(f"Строк, для которых выбран каталог материалов (не работ): {material_row_count}")
     print(f"Строк, найденных точным кодом из «Обоснования» (без текстового поиска): {exact_code_row_count}")
+
+    if args.force_text_search:
+        pct = (
+            100.0 * diag_text_search_correct / diag_known_code_rows
+            if diag_known_code_rows
+            else 0.0
+        )
+        print("\n=== Диагностика --force-text-search: точность текстового поиска без точного кода ===")
+        print(f"Строк с известным эталонным кодом («Обоснование»): {diag_known_code_rows}")
+        print(f"Текстовый поиск угадал топ-1: {diag_text_search_correct}")
+        print(f"Точность: {pct:.1f}%")
+
     if unresolved_rows:
         print(f"\nСтроки без единого кандидата ({len(unresolved_rows)}):")
         for name in unresolved_rows:
