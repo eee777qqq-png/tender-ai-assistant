@@ -101,6 +101,7 @@ class MaterialRateCandidate:
     base_price_2022: float
     unit_price: float | None = None
     price_source: str | None = None  # "current_price" | "gosr_index" | None (не определилась)
+    match_method: str = "text_search"  # "text_search" | "exact_code" — см. RateCandidate.match_method
 
 
 @dataclass
@@ -196,6 +197,13 @@ class RateCandidate:
     unpriced_resource_codes: list[str] = field(default_factory=list)
     abstract_resource_codes: list[str] = field(default_factory=list)
     priced: RegionalPriceResult | None = None
+    # "text_search" (по умолчанию, через search_candidates()) | "exact_code"
+    # (найден напрямую по коду из колонки "Обоснование" самой сметы —
+    # см. code_lookup.py). "exact_code" означает match_score=1.0 не потому,
+    # что текстовое совпадение идеальное, а потому что это ТОТ САМЫЙ код,
+    # который уже выбрал эксперт-сметчик — сравнивать с текстовым поиском
+    # по одной шкале было бы неверно, отсюда отдельное поле, не подмена score.
+    match_method: str = "text_search"
 
 
 @dataclass

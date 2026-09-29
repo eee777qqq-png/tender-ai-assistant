@@ -1,3 +1,8 @@
+from .code_lookup import (
+    find_exact_material_candidate,
+    find_exact_work_candidate,
+    normalize_gesn_code,
+)
 from .cost_estimate import SmetaCostResult, SmetaLineItem, build_cost_estimate
 from .fsnb_client import (
     ATTRIBUTION_NOTICE,
@@ -112,6 +117,8 @@ __all__ = [
     "download_fsnb_archive",
     "extract_fsnb_files",
     "extract_work_volume_rows",
+    "find_exact_material_candidate",
+    "find_exact_work_candidate",
     "fetch_country_subjects",
     "fetch_current_prices_json",
     "fetch_gosr_report",
@@ -123,6 +130,7 @@ __all__ = [
     "get_active_archive_url",
     "get_active_period_id",
     "match_work_item",
+    "normalize_gesn_code",
     "parse_current_prices_json",
     "parse_fsbc_machine_labour_xml",
     "parse_fsbc_machines_xml",

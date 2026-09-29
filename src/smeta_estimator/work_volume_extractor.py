@@ -48,6 +48,15 @@ _NUMBER_RE = re.compile(r"^[\d\s]+([.,]\d+)?$")
 # позиции, у которых уже указан явный порядковый номер).
 _POSITION_HEADER_MARKERS = ("№", "п/п")
 
+# Маркер колонки "Обоснование" — в реальных ЛСР (программы "ГРАНД-Смета",
+# "Строительный эксперт") это код нормы ГЭСН/ГЭСНр или ресурса ФСБЦ,
+# который эксперт-сметчик уже выбрал при составлении сметы (см.
+# `code_lookup.py`, 2026-09-29 — круг 2 бенчмарка Агента 4 показал, что для
+# ПЕРЕПРОВЕРКИ уже готовой сметы прямой поиск по этому коду надёжнее
+# текстового поиска по названию). Необязательная колонка — как и "№ п/п",
+# без нее поведение не меняется.
+_CODE_HEADER_WORDS = ("обоснование",)
+
 # Целое число или дробная подпозиция вида "4.1", "9.1" (позиция.подпозиция).
 _POSITION_NUMBER_RE = re.compile(r"^\d+(\.\d+)?$")
 
@@ -56,13 +65,20 @@ _POSITION_NUMBER_RE = re.compile(r"^\d+(\.\d+)?$")
 class WorkVolumeRow:
     """Одна распознанная строка ведомости объёмов работ — название работы,
     единица измерения (как написана в документе, без нормализации к
-    единицам ГЭСН — сверка единиц остаётся на эксперте), количество."""
+    единицам ГЭСН — сверка единиц остаётся на эксперте), количество.
+
+    `code` — сырой текст колонки "Обоснование" этой строки (например,
+    "ГЭСНр 68-02-004-04"), если такая колонка нашлась в заголовке и ячейка
+    не пуста, иначе `None`. Не нормализован — нормализация и поиск по
+    каталогу — в `code_lookup.py`, эта модель только выгружает то, что было
+    в файле, как есть."""
 
     name: str
     unit: str
     quantity: float
     table_index: int
     row_index: int
+    code: str | None = None
 
 
 def _parse_quantity(raw: str) -> float | None:
@@ -76,14 +92,14 @@ def _parse_quantity(raw: str) -> float | None:
         return None
 
 
-def _find_header(row: list[str]) -> tuple[int, int, int, int | None] | None:
-    """Индексы колонок (наименование, ед.изм., количество, № п/п) в строке-
-    заголовке, или `None`, если строка не похожа на заголовок такой
-    таблицы (не хватает хотя бы одной из первых трёх колонок). Колонка
-    "№ п/п" — необязательная (`None`, если в заголовке не нашлась): без неё
-    поведение прежнее, без фильтра по номеру позиции (нужно для таблиц без
-    такой колонки вообще — см. тесты на придуманных таблицах)."""
-    name_idx = unit_idx = qty_idx = pos_idx = None
+def _find_header(row: list[str]) -> tuple[int, int, int, int | None, int | None] | None:
+    """Индексы колонок (наименование, ед.изм., количество, № п/п,
+    обоснование) в строке-заголовке, или `None`, если строка не похожа на
+    заголовок такой таблицы (не хватает хотя бы одной из первых трёх
+    колонок). "№ п/п" и "Обоснование" — обе необязательные (`None`, если в
+    заголовке не нашлись): без них поведение прежнее (нужно для таблиц без
+    таких колонок вообще — см. тесты на придуманных таблицах)."""
+    name_idx = unit_idx = qty_idx = pos_idx = code_idx = None
     for i, cell in enumerate(row):
         low = cell.lower()
         if name_idx is None and all(w in low for w in _NAME_HEADER_WORDS):
@@ -94,9 +110,11 @@ def _find_header(row: list[str]) -> tuple[int, int, int, int | None] | None:
             qty_idx = i
         if pos_idx is None and any(w in low for w in _POSITION_HEADER_MARKERS):
             pos_idx = i
+        if code_idx is None and any(w in low for w in _CODE_HEADER_WORDS):
+            code_idx = i
     if name_idx is None or unit_idx is None or qty_idx is None:
         return None
-    return name_idx, unit_idx, qty_idx, pos_idx
+    return name_idx, unit_idx, qty_idx, pos_idx, code_idx
 
 
 def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
@@ -118,13 +136,13 @@ def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
     где номера позиций не выделены отдельной колонкой)."""
     rows: list[WorkVolumeRow] = []
     for table_index, table in enumerate(tables):
-        header_cols: tuple[int, int, int, int | None] | None = None
+        header_cols: tuple[int, int, int, int | None, int | None] | None = None
         for row_index, row in enumerate(table):
             if header_cols is None:
                 header_cols = _find_header(row)
                 continue
 
-            name_idx, unit_idx, qty_idx, pos_idx = header_cols
+            name_idx, unit_idx, qty_idx, pos_idx, code_idx = header_cols
             if max(name_idx, unit_idx, qty_idx) >= len(row):
                 continue
 
@@ -155,6 +173,11 @@ def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
                 # этот разбор не распознаёт. Не подставляем 0.
                 continue
 
+            code = None
+            if code_idx is not None and code_idx < len(row):
+                raw_code = row[code_idx].strip()
+                code = raw_code or None
+
             rows.append(
                 WorkVolumeRow(
                     name=name,
@@ -162,6 +185,7 @@ def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
                     quantity=quantity,
                     table_index=table_index,
                     row_index=row_index,
+                    code=code,
                 )
             )
     return rows

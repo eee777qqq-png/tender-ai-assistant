@@ -147,3 +147,30 @@ def test_table_without_position_column_keeps_old_behaviour():
     # другими таблицами без выделенной колонки номера (см. тесты выше).
     rows = extract_work_volume_rows([_TYPICAL_TABLE])
     assert len(rows) == 2
+
+
+def test_real_lsr_structure_extracts_code_column():
+    # Колонка "Обоснование" — код нормы ГЭСН/ГЭСНр или прямой ФСБЦ-код,
+    # который эксперт-сметчик уже выбрал при составлении сметы (см.
+    # code_lookup.py, CLAUDE.md открытый п.17).
+    rows = extract_work_volume_rows([_REAL_LSR_TABLE])
+
+    assert rows[0].code == "ГЭСНр58-01-005-03"
+    assert rows[1].code == "ФСБЦ-11.1.03.01-0065"
+
+
+def test_table_without_code_column_leaves_code_none():
+    # _TYPICAL_TABLE не содержит колонки "Обоснование" вообще —
+    # поведение не меняется, code=None у каждой строки.
+    rows = extract_work_volume_rows([_TYPICAL_TABLE])
+    assert all(row.code is None for row in rows)
+
+
+def test_code_column_present_but_cell_empty_gives_none():
+    table = [
+        ["№", "Обоснование", "Наименование работ", "Ед. изм.", "Количество"],
+        ["1", "", "Ремонт кровли из рулонных материалов", "м2", "250"],
+    ]
+    rows = extract_work_volume_rows([table])
+    assert len(rows) == 1
+    assert rows[0].code is None

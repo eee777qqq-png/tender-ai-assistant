@@ -75,6 +75,8 @@ from smeta_estimator import (
     fetch_current_prices_json,
     fetch_gosr_report,
     fetch_worker_salary_registry,
+    find_exact_material_candidate,
+    find_exact_work_candidate,
     parse_current_prices_json,
     parse_fsbc_machine_labour_xml,
     parse_fsbc_machines_xml,
@@ -88,6 +90,7 @@ from smeta_estimator import (
     search_candidates,
     search_material_candidates,
 )
+from smeta_estimator.models import MaterialRateCandidate, RateCandidate
 from smeta_estimator.fsnb_client import (
     ATTRIBUTION_NOTICE,
     FSBC_MACHINES_FILENAME,
@@ -180,11 +183,60 @@ def main() -> int:
     unresolved_rows: list[str] = []
     material_row_count = 0
 
+    exact_code_row_count = 0
+
     for row in rows:
         print(f"\n--- {row.name} ({row.unit}, количество {row.quantity}) ---")
-        work_candidates = search_candidates(catalog, row.name, top_n=args.top_n)
-        material_candidates = search_material_candidates(material_catalog, row.name, top_n=args.top_n)
-        source = choose_candidate_source(work_candidates, material_candidates)
+
+        # Прямой поиск по коду из «Обоснования» — приоритетный путь перед
+        # текстовым поиском, см. code_lookup.py и CLAUDE.md, открытый п.17
+        # («Следующий шаг круга 2», пункт «а»). Строка без распознанного
+        # кода (row.code is None) или код, не нашедшийся ни в одном из двух
+        # каталогов, — ведут себя ровно как раньше, без изменений.
+        source: str | None = None
+        work_candidates: list[RateCandidate] = []
+        material_candidates: list[MaterialRateCandidate] = []
+
+        if row.code:
+            exact_work = find_exact_work_candidate(catalog, row.code)
+            if exact_work is not None:
+                work_candidates = [
+                    RateCandidate(
+                        code=exact_work.code,
+                        name=exact_work.name,
+                        unit=exact_work.unit,
+                        base_price=exact_work.base_price,
+                        match_score=1.0,
+                        resources=list(exact_work.resources),
+                        unpriced_resource_codes=list(exact_work.unpriced_resource_codes),
+                        abstract_resource_codes=list(exact_work.abstract_resource_codes),
+                        match_method="exact_code",
+                    )
+                ]
+                source = "work"
+            else:
+                exact_material = find_exact_material_candidate(material_catalog, row.code)
+                if exact_material is not None:
+                    material_candidates = [
+                        MaterialRateCandidate(
+                            code=exact_material.code,
+                            name=exact_material.name,
+                            unit=exact_material.unit,
+                            match_score=1.0,
+                            base_price_2022=exact_material.price,
+                            match_method="exact_code",
+                        )
+                    ]
+                    source = "material"
+
+            if source is not None:
+                exact_code_row_count += 1
+                print(f"  Код из «Обоснования» («{row.code}») найден точно в каталоге — текстовый поиск пропущен.")
+
+        if source is None:
+            work_candidates = search_candidates(catalog, row.name, top_n=args.top_n)
+            material_candidates = search_material_candidates(material_catalog, row.name, top_n=args.top_n)
+            source = choose_candidate_source(work_candidates, material_candidates)
 
         if source is None:
             best = max(
@@ -213,8 +265,13 @@ def main() -> int:
             for c in priced:
                 row_total = c.priced.total_price * row.quantity
                 unresolved = c.priced.unresolved_resource_codes or "нет"
+                label = (
+                    "точный код из документа"
+                    if c.match_method == "exact_code"
+                    else f"score={c.match_score:.2f}, каталог работ"
+                )
                 print(
-                    f"  {c.code} (score={c.match_score:.2f}, каталог работ): {c.name} [{c.unit}] — "
+                    f"  {c.code} ({label}): {c.name} [{c.unit}] — "
                     f"{c.priced.total_price:,.2f} руб./ед., на объём {row.quantity} -> "
                     f"{row_total:,.2f} руб. (unresolved: {unresolved})"
                 )
@@ -226,15 +283,20 @@ def main() -> int:
                 material_candidates, current_prices=current_prices, gosr_index=gosr_index
             )
             for c in priced_materials:
+                label = (
+                    "точный код из документа"
+                    if c.match_method == "exact_code"
+                    else f"score={c.match_score:.2f}, каталог материалов"
+                )
                 if c.unit_price is None:
                     print(
-                        f"  {c.code} (score={c.match_score:.2f}, каталог материалов): {c.name} "
+                        f"  {c.code} ({label}): {c.name} "
                         f"[{c.unit}] — цена не определена (unresolved)"
                     )
                     continue
                 row_total = c.unit_price * row.quantity
                 print(
-                    f"  {c.code} (score={c.match_score:.2f}, каталог материалов): {c.name} "
+                    f"  {c.code} ({label}): {c.name} "
                     f"[{c.unit}] — {c.unit_price:,.2f} руб./ед. ({c.price_source}), на объём "
                     f"{row.quantity} -> {row_total:,.2f} руб."
                 )
@@ -256,6 +318,7 @@ def main() -> int:
         "см. ограничения в докстринге скрипта)"
     )
     print(f"Строк, для которых выбран каталог материалов (не работ): {material_row_count}")
+    print(f"Строк, найденных точным кодом из «Обоснования» (без текстового поиска): {exact_code_row_count}")
     if unresolved_rows:
         print(f"\nСтроки без единого кандидата ({len(unresolved_rows)}):")
         for name in unresolved_rows:
