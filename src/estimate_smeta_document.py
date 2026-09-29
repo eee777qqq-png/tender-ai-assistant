@@ -318,9 +318,15 @@ def main() -> int:
                     )
                     continue
                 row_total = c.unit_price * row.quantity
+                idx_note = (
+                    f", индекс {c.index_value} ({c.group_name}), базисная цена 2022: "
+                    f"{c.base_price_2022:,.2f} руб./ед."
+                    if c.price_source == "gosr_index"
+                    else ""
+                )
                 print(
                     f"  {c.code} ({label}): {c.name} "
-                    f"[{c.unit}] — {c.unit_price:,.2f} руб./ед. ({c.price_source}), на объём "
+                    f"[{c.unit}] — {c.unit_price:,.2f} руб./ед. ({c.price_source}{idx_note}), на объём "
                     f"{row.quantity} -> {row_total:,.2f} руб."
                 )
             top = priced_materials[0]

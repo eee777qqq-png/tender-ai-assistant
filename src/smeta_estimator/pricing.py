@@ -186,7 +186,13 @@ def price_material_candidate_for_region(
     )
     if resolution is None:
         return replace(candidate, unit_price=None, price_source=None)
-    return replace(candidate, unit_price=resolution.unit_price, price_source=resolution.source)
+    return replace(
+        candidate,
+        unit_price=resolution.unit_price,
+        price_source=resolution.source,
+        index_value=resolution.index_value,
+        group_name=resolution.group_name,
+    )
 
 
 def price_material_candidates_for_region(

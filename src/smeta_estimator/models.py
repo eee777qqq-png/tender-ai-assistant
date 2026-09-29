@@ -102,6 +102,13 @@ class MaterialRateCandidate:
     unit_price: float | None = None
     price_source: str | None = None  # "current_price" | "gosr_index" | None (не определилась)
     match_method: str = "text_search"  # "text_search" | "exact_code" — см. RateCandidate.match_method
+    # Заполняются только когда price_source == "gosr_index" — для диагностики
+    # подозрительно больших/маленьких цен материалов (круг 2, 2026-09-29,
+    # см. CLAUDE.md открытый п.17): без этого нельзя было увидеть, каким
+    # именно индексом и для какой группы ресурсов посчитана итоговая цена,
+    # только сам факт "gosr_index". None для current_price/unresolved.
+    index_value: float | None = None
+    group_name: str | None = None
 
 
 @dataclass
