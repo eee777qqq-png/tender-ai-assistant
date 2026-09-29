@@ -116,6 +116,16 @@ def main() -> int:
         help="Только для подписи в выводе — не влияет на запрос",
     )
     parser.add_argument("--top-n", type=int, default=3, help="Кандидатов на строку")
+    parser.add_argument(
+        "--show-resources",
+        action="store_true",
+        help=(
+            "Печатать разбивку по каждому ресурсу внутри топ-1 позиции ГЭСН/ГЭСНр "
+            "(код/название/количество/цена/источник цены — current_price/gosr_index/"
+            "unresolved) — для диагностики подозрительно больших сумм по работе, "
+            "не только по материалам (см. CLAUDE.md, открытый п.17, «Находка 5»)."
+        ),
+    )
     args = parser.parse_args()
 
     path = Path(args.xlsx)
@@ -277,6 +287,19 @@ def main() -> int:
                 )
             top = priced[0]
             top_price = top.priced.total_price
+            if args.show_resources:
+                print(f"    Разбивка по ресурсам топ-1 ({top.code}):")
+                for res in top.priced.resolutions:
+                    if res.source == "unresolved":
+                        print(f"      {res.resource_code} «{res.resource_name}» x{res.quantity} — не определена (unresolved)")
+                        continue
+                    extra = f", +труд машиниста {res.machinist_wage_added:,.2f}" if res.machinist_wage_added else ""
+                    idx = f", индекс {res.index_value} ({res.group_name})" if res.source == "gosr_index" else ""
+                    print(
+                        f"      {res.resource_code} «{res.resource_name}» x{res.quantity} — "
+                        f"{res.unit_price:,.2f} руб./ед. ({res.source}{idx}{extra}) -> "
+                        f"{res.line_total:,.2f} руб."
+                    )
         else:
             material_row_count += 1
             priced_materials = price_material_candidates_for_region(
