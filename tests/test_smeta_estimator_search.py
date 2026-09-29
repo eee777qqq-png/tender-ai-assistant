@@ -16,8 +16,13 @@ from smeta_estimator.fsnb_parser import (
     parse_gesn_xml,
     parse_material_catalog_xml,
 )
-from smeta_estimator.models import MaterialRateCandidate, RateCandidate
-from smeta_estimator.search import choose_candidate_source, search_candidates, search_material_candidates
+from smeta_estimator.models import GesnWorkItem, MaterialCandidateInfo, MaterialRateCandidate, RateCandidate
+from smeta_estimator.search import (
+    MATCH_SCORE_THRESHOLD,
+    choose_candidate_source,
+    search_candidates,
+    search_material_candidates,
+)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -158,3 +163,159 @@ def test_choose_candidate_source_respects_custom_threshold():
 
     assert choose_candidate_source(work, [], threshold=0.5) is None
     assert choose_candidate_source(work, [], threshold=0.3) == "work"
+
+
+# --- Вес технических токенов (фракция/марка/типоразмер/номер расценки) —
+# 2026-09-29, круг 2. Найдено замером --force-text-search (CLAUDE.md,
+# открытый п.16.2): текстовый поиск без точного кода из «Обоснования»
+# регулярно путал явно разные варианты внутри одной категории, потому что
+# цифровой параметр весил как любое обычное слово в "|пересечение|/|запрос|".
+# Названия ниже — реальные названия из каталога ФСНБ-2022 для 4
+# задокументированных промахов (не выдуманы, скопированы из живого прогона
+# на тендерах круга 2 — Краснодар №0337100017726000160, МО №0337100017726000168).
+
+
+def _work_item(code: str, name: str) -> GesnWorkItem:
+    return GesnWorkItem(code=code, name=name, unit="ед.")
+
+
+def _material_item(code: str, name: str) -> MaterialCandidateInfo:
+    return MaterialCandidateInfo(code=code, name=name, unit="ед.", price=0.0)
+
+
+def test_search_material_candidates_separates_gravel_fraction_20_40_from_5_10():
+    # Круг 2, Краснодар: до фикса оба давали score=1.00 (числа "20-40"/
+    # "5(3)-10" отфильтровывались как короткие токены ещё до взвешивания).
+    catalog = [
+        _material_item(
+            "02.2.05.04-2088",
+            "Щебень из плотных горных пород для строительных работ М 600, фракция 20-40 мм",
+        ),
+        _material_item(
+            "02.2.05.04-2008",
+            "Щебень из плотных горных пород для строительных работ М 600, фракция 5(3)-10 мм",
+        ),
+    ]
+
+    candidates = search_material_candidates(
+        catalog, "Щебень из плотных горных пород для строительных работ М 600, фракция 20-40 мм"
+    )
+
+    by_code = {c.code: c for c in candidates}
+    assert by_code["02.2.05.04-2088"].match_score == 1.0
+    assert by_code["02.2.05.04-2088"].match_score > by_code["02.2.05.04-2008"].match_score
+
+
+def test_search_material_candidates_separates_cement_grade_32_5_from_42_5():
+    # Круг 2, МО: марка цемента "32,5Н" vs "42,5Н" — тот же класс промаха.
+    catalog = [
+        _material_item(
+            "03.2.01.02-0012",
+            "Портландцемент с минеральными добавками общестроительный ЦЕМ II 32,5Н",
+        ),
+        _material_item(
+            "03.2.01.02-0002",
+            "Портландцемент с минеральными добавками общестроительный ЦЕМ II 42,5Н",
+        ),
+    ]
+
+    candidates = search_material_candidates(
+        catalog, "Портландцемент с минеральными добавками общестроительный ЦЕМ II 32,5Н"
+    )
+
+    by_code = {c.code: c for c in candidates}
+    assert by_code["03.2.01.02-0012"].match_score == 1.0
+    assert by_code["03.2.01.02-0012"].match_score > by_code["03.2.01.02-0002"].match_score
+
+
+def test_search_candidates_separates_gesnr_width_1_75_from_width_1():
+    # Круг 2, Краснодар: ширина "до 1,75 м" vs "до 1 м" — работа ГЭСНр,
+    # не материал (проверяет ту же формулу на втором каталоге/функции).
+    catalog = [
+        _work_item(
+            "ГЭСНр58-01-020-04",
+            "Смена обделок из листовой стали — Смена обделок из листовой стали "
+            "(брандмауэров и парапетов без обделки боковых стенок) шириной: — до 1,75 м",
+        ),
+        _work_item(
+            "ГЭСНр58-01-020-03",
+            "Смена обделок из листовой стали — Смена обделок из листовой стали "
+            "(брандмауэров и парапетов без обделки боковых стенок) шириной: — до 1 м",
+        ),
+    ]
+
+    candidates = search_candidates(
+        catalog,
+        "Смена обделок из листовой стали (брандмауэров и парапетов без обделки "
+        "боковых стенок) шириной: до 1,75 м",
+    )
+
+    by_code = {c.code: c for c in candidates}
+    assert by_code["ГЭСНр58-01-020-04"].match_score == 1.0
+    assert by_code["ГЭСНр58-01-020-04"].match_score > by_code["ГЭСНр58-01-020-03"].match_score
+
+
+def test_search_candidates_finds_correct_match_below_old_threshold():
+    # Круг 2, Краснодар: реальная строка ведомости (row.name — как её
+    # реально извлекает work_volume_extractor из xlsx, с "лишними" словами
+    # "с разуклонкой" и встроенным текстом формулы "Кол-во: =...", которые
+    # не входят в название каталога) даёт верный код score=6/13≈0.4615 —
+    # НИЖЕ старого порога 0.50 (был бы честным "не найдено" при заведомо
+    # верном совпадении), но выше нового MATCH_SCORE_THRESHOLD=0.45 (см.
+    # докстринг search.py — порог пересмотрен по факту распределения score
+    # на обоих документах круга 2).
+    catalog = [
+        _work_item(
+            "27-04-001-04",
+            "Устройство подстилающих и выравнивающих слоев оснований — "
+            "Устройство подстилающих и выравнивающих слоев оснований: — из щебня",
+        ),
+        _work_item(
+            "27-04-001-01",
+            "Устройство подстилающих и выравнивающих слоев оснований — "
+            "Устройство подстилающих и выравнивающих слоев оснований: — из песка",
+        ),
+    ]
+
+    candidates = search_candidates(
+        catalog,
+        "Устройство подстилающих и выравнивающих слоев оснований: из щебня/ с "
+        "разуклонкой\nКол-во: =(71*1.4*0.1)/100",
+    )
+
+    assert candidates
+    assert candidates[0].code == "27-04-001-04"
+    assert candidates[0].match_score == pytest.approx(6 / 13)
+    assert MATCH_SCORE_THRESHOLD < candidates[0].match_score < 0.5
+
+
+def test_search_material_candidates_pipe_pair_stays_an_honest_tie():
+    # Круг 2, Краснодар: "Труба металлическая..." vs "Труба С КОЛЕНОМ
+    # металлическая..." — здесь расхождение НЕ в цифровом токене (оба
+    # содержат одинаковые "102х76"/"3000"), а в лишнем НЕчисловом слове
+    # "коленом" у неправильного кандидата, которого нет в запросе вообще.
+    # Взвешивание технических токенов такую пару принципиально не
+    # разделяет (это не его задача — "|пересечение|/|запрос|" не штрафует
+    # кандидата за лишние слова, которых нет в запросе) — честно
+    # зафиксировано как оставшийся тай-брейк, не выдаётся за решённое.
+    catalog = [
+        _material_item(
+            "12.1.01.05-0070",
+            "Труба металлическая для водосточных систем, окрашенная, размеры "
+            "трубы 102х76 мм, длина трубы 3000 мм",
+        ),
+        _material_item(
+            "12.1.01.05-0062",
+            "Труба с коленом металлическая для водосточных систем, окрашенная, "
+            "размеры трубы 102х76 мм, длина трубы 3000 мм",
+        ),
+    ]
+
+    candidates = search_material_candidates(
+        catalog,
+        "Труба металлическая для водосточных систем, окрашенная, размеры трубы "
+        "102х76 мм, длина трубы 3000 мм",
+    )
+
+    by_code = {c.code: c for c in candidates}
+    assert by_code["12.1.01.05-0070"].match_score == by_code["12.1.01.05-0062"].match_score == 1.0
