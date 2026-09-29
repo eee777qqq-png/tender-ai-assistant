@@ -295,10 +295,29 @@ def main() -> int:
                         continue
                     extra = f", +труд машиниста {res.machinist_wage_added:,.2f}" if res.machinist_wage_added else ""
                     idx = f", индекс {res.index_value} ({res.group_name})" if res.source == "gosr_index" else ""
+                    # res.line_total — цена ресурса НА ЕДИНИЦУ самой позиции
+                    # ГЭСН/ГЭСНр (например, на 100 м3), а не на фактический
+                    # объём этой строки сметы (row.quantity). Раньше здесь
+                    # печаталась только эта немасштабированная величина — на
+                    # круге 2 (2026-09-29) это привело к ложному выводу, что
+                    # щебень (код 02.2.05.04-2088, Краснодар) переоценен в
+                    # ~10 раз: 164 568,73 руб. оказались ценой на 100 м3
+                    # позиции, а не на фактические 9,94 м3 (row.quantity
+                    # 0.0994) — реальный вклад в строку ближе к 16 355 руб.,
+                    # что почти совпадает с реальной сметой (16 121,03 руб.,
+                    # см. CLAUDE.md, открытый п.17, «Находка 6»). Теперь
+                    # печатается явно и отмасштабированная величина тоже —
+                    # чтобы не повторить ту же ошибку чтения диагностики.
+                    scaled = None if res.line_total is None else res.line_total * row.quantity
+                    scaled_note = (
+                        f", на объём строки {row.quantity} -> {scaled:,.2f} руб."
+                        if scaled is not None
+                        else ""
+                    )
                     print(
                         f"      {res.resource_code} «{res.resource_name}» x{res.quantity} — "
                         f"{res.unit_price:,.2f} руб./ед. ({res.source}{idx}{extra}) -> "
-                        f"{res.line_total:,.2f} руб."
+                        f"{res.line_total:,.2f} руб. на единицу позиции{scaled_note}"
                     )
         else:
             material_row_count += 1
