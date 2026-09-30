@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from smeta_estimator.code_lookup import (
+    classify_unresolved_row,
     find_exact_material_candidate,
     find_exact_work_candidate,
     normalize_gesn_code,
@@ -119,3 +120,40 @@ def test_find_exact_material_candidate_matches_by_code():
 
 def test_find_exact_material_candidate_returns_none_when_not_found():
     assert find_exact_material_candidate(_material_catalog(), "08.3.05.05-9999") is None
+
+
+def test_classify_unresolved_row_recognizes_market_quote_reference():
+    # Реальный паттерн круга 1 (ceiling): "ТЦ_20.3.03.07_77_..." — снятая
+    # котировка конкретного поставщика, не код каталога.
+    result = classify_unresolved_row("ТЦ_20.3.03.07_77_7722753969_30.06.2026_02_11.2", "Светильник ЭРА SPO-6-36-4K-P-EM")
+    assert result is not None
+    assert "рыночная котировка" in result
+
+
+def test_classify_unresolved_row_recognizes_gesnm_prefix():
+    result = classify_unresolved_row("ГЭСНм10-08-002-02", "Извещатель ПС автоматический")
+    assert result is not None
+    assert "ГЭСНм" in result
+
+
+def test_classify_unresolved_row_recognizes_order_paragraph_reference():
+    # Реальный паттерн круга 1 (ceiling): "421/пр_2020_п.75_пп.а".
+    result = classify_unresolved_row("421/пр_2020_п.75_пп.а", "Вспомогательные ненормируемые материальные ресурсы")
+    assert result is not None
+    assert "приказ" in result
+
+
+def test_classify_unresolved_row_recognizes_transport_by_name():
+    result = classify_unresolved_row("47-1", "Погрузка в автотранспортное средство: мусор строительный")
+    assert result is not None
+    assert "транспортный" in result
+
+    result2 = classify_unresolved_row("02-15-1-01-0014", "Перевозка грузов I класса автомобилями-самосвалами")
+    assert result2 is not None
+
+
+def test_classify_unresolved_row_returns_none_for_genuinely_unclear_case():
+    # Ни один известный класс не подходит — причина должна остаться общей,
+    # не домысленной.
+    assert classify_unresolved_row("12-34-567-89", "Устройство чего-то совершенно нового") is None
+    assert classify_unresolved_row(None, "Работа без кода в Обосновании вообще") is None

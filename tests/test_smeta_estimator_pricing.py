@@ -104,6 +104,53 @@ def test_abstract_resources_stay_unresolved_even_with_a_matching_gosr_entry():
     assert priced.priced.total_price == 0.0
 
 
+def test_bare_aggregate_labour_code_2_is_not_unresolved_and_contributes_zero():
+    """Голый код "2" — итоговая рекап-строка «Затраты труда машинистов»,
+    не самостоятельный ресурс (найдено и проверено на реальных документах
+    круга 1, 2026-09-30 — см. CLAUDE.md/докстринг pricing.py). Даже если
+    для кода "2" случайно нашлась бы current_price/gosr_index запись, она
+    не должна использоваться — код отсекается раньше любого поиска цены,
+    даёт distinct источник "aggregate_rollup", не "unresolved"."""
+    candidate = make_candidate(
+        [
+            GesnResourceUsage(resource_code="1-100-30", resource_name="Средний разряд работы 3,0", quantity=1.0),
+            GesnResourceUsage(resource_code="2", resource_name="", quantity=0.32),
+        ]
+    )
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={"1-100-30": 657.26, "2": 999.0},  # "2" намеренно есть в current_prices — не должна использоваться
+        gosr_index={},
+        resource_base_prices={},
+    )
+
+    assert priced.priced.unresolved_resource_codes == []
+    code2 = next(r for r in priced.priced.resolutions if r.resource_code == "2")
+    assert code2.source == "aggregate_rollup"
+    assert code2.unit_price == 0.0
+    assert priced.priced.total_price == pytest.approx(657.26)  # только разрядный труд, "2" не задваивает
+
+
+def test_bare_aggregate_labour_code_1_is_also_treated_as_rollup():
+    candidate = make_candidate([GesnResourceUsage(resource_code="1", resource_name="", quantity=203.11)])
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={},
+        gosr_index={},
+        resource_base_prices={},
+    )
+
+    assert priced.priced.unresolved_resource_codes == []
+    assert priced.priced.resolutions[0].source == "aggregate_rollup"
+    assert priced.priced.total_price == 0.0
+
+
 def test_original_candidate_is_not_mutated():
     candidate = make_candidate([GesnResourceUsage(resource_code="A", resource_name="ресурс А", quantity=2.0)])
 

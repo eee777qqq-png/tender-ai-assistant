@@ -63,6 +63,7 @@ import sys
 from pathlib import Path
 
 from document_analyst.table_reader import extract_xlsx_tables
+from smeta_estimator.code_lookup import classify_unresolved_row
 from smeta_estimator import (
     CURRENT_PERIOD_ID,
     MATCH_SCORE_THRESHOLD,
@@ -290,6 +291,11 @@ def main() -> int:
                 )
 
         if source is None:
+            known_class = classify_unresolved_row(row.code, row.name)
+            if known_class is not None:
+                print(f"  Кандидатов не найдено — известный класс: {known_class}.")
+                unresolved_rows.append(f"{row.name} [{known_class}]")
+                continue
             best = max(
                 (work_candidates[0].match_score if work_candidates else 0.0),
                 (material_candidates[0].match_score if material_candidates else 0.0),
