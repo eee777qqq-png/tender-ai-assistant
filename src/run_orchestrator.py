@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from classifier import ConstructionClassifier
 from eis_client import EISClient, EISConfig, fetch_participant_requirements, notice_document_to_tender
-from eis_client.exceptions import EISError
+from eis_client.exceptions import AttachmentParseError, EISError
 from onboarding.models import ProfileStatus
 from orchestrator import PipelineInputs, RunOutcome, record_expert_signoff, run_tender_pipeline
 from quality_control.expert_review import ExpertReviewStore
@@ -128,7 +128,7 @@ def main() -> int:
             fetched += 1
             try:
                 extracted = fetch_participant_requirements(client, document.raw_xml, tender.purchase_number)
-            except EISError as exc:
+            except (EISError, AttachmentParseError) as exc:
                 print(f"\n{tender.purchase_number}: документация не скачалась ({exc}) — прогон без неё")
                 extracted = None
 

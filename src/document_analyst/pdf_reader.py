@@ -22,18 +22,30 @@ import io
 
 from pypdf import PdfReader
 
+from .errors import AttachmentParseError
+
 
 def extract_text_from_pdf(content: bytes) -> str:
     """Текст всех страниц PDF, через двойной перевод строки между
     страницами. Пустая строка для каждой конкретной страницы (в том числе
     из-за отсутствия текстового слоя — скан) просто ничего не добавляет,
     без исключения."""
-    reader = PdfReader(io.BytesIO(content))
-
-    parts: list[str] = []
-    for page in reader.pages:
-        text = (page.extract_text() or "").strip()
-        if text:
-            parts.append(text)
+    # Проверено на практике (2026-10-03), что реально бросает pypdf:
+    # случайные байты и усечённый файл — `PdfStreamError`; пустой —
+    # `EmptyFileError`; без структуры (`%PDF` без xref) — `PdfReadError`;
+    # зашифрованный с непустым паролем — `FileNotDecryptedError`; AES без
+    # установленного `cryptography` — `DependencyError`. На испорченных
+    # потоках страниц бывают и обычные ValueError/KeyError/struct.error, так
+    # что ловим широко. PDF, зашифрованный пустым паролем, pypdf открывает
+    # сам. Скан без текстового слоя — не ошибка (см. докстринг модуля).
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        parts: list[str] = []
+        for page in reader.pages:
+            text = (page.extract_text() or "").strip()
+            if text:
+                parts.append(text)
+    except Exception as exc:  # noqa: BLE001
+        raise AttachmentParseError(f"не удалось открыть .pdf: {type(exc).__name__}: {exc}") from exc
 
     return "\n\n".join(parts)

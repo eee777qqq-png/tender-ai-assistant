@@ -85,7 +85,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from classifier import ConstructionClassifier, coarse_classify, final_classify
 from document_analyst.models import ExtractedRequirements
 from eis_client import EISClient, EISConfig, fetch_participant_requirements, notice_document_to_tender
-from eis_client.exceptions import EISError
+from eis_client.exceptions import AttachmentParseError, EISError
 
 _MISSING_PROFILE_HINT = """
 Не найден src/real_client_profile.py — реальный профиль клиента (Агент 11).
@@ -246,9 +246,9 @@ def main() -> int:
             # документацию закупки (Агент 3), не раньше.
             try:
                 extracted = fetch_participant_requirements(client, document.raw_xml, tender.purchase_number)
-            except EISError as exc:
+            except (EISError, AttachmentParseError) as exc:
                 logger.warning(
-                    "Не удалось скачать документацию закупки %s (Агент 3): %s — используем только coarse-вердикт",
+                    "Не удалось скачать/открыть документацию закупки %s (Агент 3): %s — используем только coarse-вердикт",
                     tender.purchase_number,
                     exc,
                 )

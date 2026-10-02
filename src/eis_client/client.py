@@ -14,12 +14,16 @@ from xml.etree import ElementTree as ET
 import requests
 
 from .config import EISConfig
-from .exceptions import EISRequestError
+from .exceptions import AttachmentParseError, EISRequestError
 from .soap_request import build_docs_by_org_region_request
 from .soap_response import extract_archive_urls
 from .tls import combined_ca_bundle_path
 
 logger = logging.getLogger(__name__)
+
+# Глубже этого вложенные zip внутри архива не разбираем (защита от рекурсии и
+# слишком нестандартных упаковок) — см. `_extract_xml_files()`.
+_MAX_NESTED_ZIP_DEPTH = 3
 
 # Найдено вживую Edwin, 2026-09-26: скачивание приложений извещения
 # (attachmentsInfo/attachmentInfo/url, https://zakupki.gov.ru/44fz/filestore/...)
@@ -226,6 +230,7 @@ class EISClient:
         archive_urls = self.fetch_archive_urls(exact_date)
         xml_total = 0
         xml_unparsed = 0
+        archives_unparsed = 0
         with_any_okpd2 = 0
         sample_codes: list[str] = []
         logger.info("%s: архивов в ответе ЕИС — %d", exact_date, len(archive_urls))
@@ -237,7 +242,16 @@ class EISClient:
                 raw_path = self._raw_archive_dir / f"{exact_date.isoformat()}_{index:02d}.zip"
                 raw_path.write_bytes(archive_bytes)
                 logger.info("Архив сохранён: %s", raw_path)
-            for file_name, xml_bytes in self._extract_xml_files(archive_bytes):
+            try:
+                archive_files = self._extract_xml_files(archive_bytes, source=archive_url)
+            except AttachmentParseError as exc:
+                # Один битый архив не должен ронять весь день (и весь запуск
+                # монитора) — его документы за этот день потеряны, но это
+                # явно в логе и в счётчике ниже, не молчание.
+                archives_unparsed += 1
+                logger.error("%s: архив №%d пропущен — %s", exact_date, index, exc)
+                continue
+            for file_name, xml_bytes in archive_files:
                 xml_total += 1
                 try:
                     ET.fromstring(xml_bytes)
@@ -264,9 +278,9 @@ class EISClient:
                     )
 
         logger.info(
-            "%s: XML-документов в архивах — %d (не разобрались как XML — %d), с найденным ОКПД2 — %d, "
-            "по стройке — %d; примеры найденных кодов: %s",
-            exact_date, xml_total, xml_unparsed, with_any_okpd2, len(results),
+            "%s: XML-документов в архивах — %d (не разобрались как XML — %d), архивов не открылось — %d, "
+            "с найденным ОКПД2 — %d, по стройке — %d; примеры найденных кодов: %s",
+            exact_date, xml_total, xml_unparsed, archives_unparsed, with_any_okpd2, len(results),
             ", ".join(sample_codes) or "нет",
         )
         return results
@@ -287,8 +301,13 @@ class EISClient:
         classifier = self._require_classifier()
         results: list[ConstructionDocument] = []
         for archive_path in archive_paths:
-            archive_bytes = Path(archive_path).read_bytes()
-            for file_name, xml_bytes in self._extract_xml_files(archive_bytes):
+            try:
+                archive_bytes = Path(archive_path).read_bytes()
+                archive_files = self._extract_xml_files(archive_bytes, source=str(archive_path))
+            except (AttachmentParseError, OSError) as exc:
+                logger.error("Архив %s пропущен — %s", archive_path, exc)
+                continue
+            for file_name, xml_bytes in archive_files:
                 try:
                     ET.fromstring(xml_bytes)
                 except ET.ParseError:
@@ -316,12 +335,52 @@ class EISClient:
         return self._classifier
 
     @staticmethod
-    def _extract_xml_files(archive_bytes: bytes) -> list[tuple[str, bytes]]:
-        files = []
-        with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
+    def _extract_xml_files(
+        archive_bytes: bytes, source: str = "<архив>", _depth: int = 0
+    ) -> list[tuple[str, bytes]]:
+        """XML-файлы архива, включая вложенные zip (до `_MAX_NESTED_ZIP_DEPTH`
+        уровней; имя вложенного файла — `внешний.zip!внутренний.xml`).
+
+        **Не открылся САМ архив** (случайные байты, пустой, усечённый —
+        `zipfile.BadZipFile`/`OSError`) — `AttachmentParseError`, а не пустой
+        список: вызывающий код должен отличать «архив не разобран» от «в нём
+        нет XML». `source` — имя/путь архива для сообщения. Один сбой внутри
+        открывшегося архива (битый вложенный zip, ошибка CRC/шифрование
+        отдельного файла) не роняет остальное: файл пропускается с
+        предупреждением в лог, остальные XML возвращаются.
+
+        Слишком глубоко вложенный zip (глубже лимита) пропускается с
+        предупреждением — формат считаем слишком нестандартным."""
+        files: list[tuple[str, bytes]] = []
+        try:
+            zf_ctx = zipfile.ZipFile(io.BytesIO(archive_bytes))
+        except (zipfile.BadZipFile, OSError) as exc:
+            raise AttachmentParseError(f"не удалось открыть zip-архив {source}: {type(exc).__name__}: {exc}") from exc
+
+        with zf_ctx as zf:
             for name in zf.namelist():
-                if name.lower().endswith(".xml"):
-                    files.append((name, zf.read(name)))
+                lowered = name.lower()
+                is_xml = lowered.endswith(".xml")
+                is_nested_zip = lowered.endswith(".zip")
+                if not (is_xml or is_nested_zip):
+                    continue
+                try:
+                    data = zf.read(name)
+                except Exception as exc:  # noqa: BLE001 — CRC, пароль, усечённый поток и т.п.
+                    logger.warning("%s: не удалось прочитать %r внутри архива: %s: %s", source, name, type(exc).__name__, exc)
+                    continue
+                if is_xml:
+                    files.append((name, data))
+                    continue
+                if _depth >= _MAX_NESTED_ZIP_DEPTH:
+                    logger.warning("%s: вложенный архив %r глубже %d уровней — пропущен", source, name, _MAX_NESTED_ZIP_DEPTH)
+                    continue
+                try:
+                    nested = EISClient._extract_xml_files(data, f"{source}!{name}", _depth + 1)
+                except AttachmentParseError as exc:
+                    logger.warning("Вложенный архив пропущен: %s", exc)
+                    continue
+                files.extend((f"{name}!{inner}", content) for inner, content in nested)
         return files
 
     @staticmethod

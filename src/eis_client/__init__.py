@@ -1,6 +1,7 @@
 from .attachment_analyst import fetch_participant_requirements
 from .client import ConstructionDocument, EISClient
 from .config import EISConfig
+from .exceptions import AttachmentParseError
 from .notice_parser import (
     APPLICATION_REQUIREMENTS_DOC_KIND_CODE,
     NoticeAttachment,
