@@ -305,6 +305,30 @@ def fetch_transportation_by_auto(
     )
 
 
+def fetch_wage_act_file_name(price_zone_id: int, period_id: int, timeout: int = 30) -> str | None:
+    """Имя файла регионального акта об оплате труда, который ФГИС ЦС
+    показывает для этой зоны/квартала (`RimWorkerSalaryRegistry/DocumentInfo`,
+    например "147 от 27.07.2026.pdf" для Краснодарского края, 3 кв. 2026).
+    `None` — акт не опубликован (так отвечает, например, г. Москва)."""
+    response = requests.get(
+        f"{BASE_URL}/EstimatedPrice/RimWorkerSalaryRegistry/DocumentInfo",
+        params={
+            "countrySubjectId": _subject_id_for_zone(price_zone_id),
+            "priceZoneId": price_zone_id,
+            "periodId": period_id,
+            "authorityId": "null",
+        },
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    if not response.content.strip():
+        return None
+    data = response.json()
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    return data.get("fileName") or None
+
+
 def _subject_id_for_zone(price_zone_id: int) -> int:
     for info in [*PILOT_PRICE_ZONES.values(), *BENCHMARK_PRICE_ZONES.values()]:
         if info["price_zone_id"] == price_zone_id:

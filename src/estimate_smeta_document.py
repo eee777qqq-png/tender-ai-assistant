@@ -59,7 +59,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from document_analyst.table_reader import extract_xlsx_tables
@@ -94,8 +96,11 @@ from smeta_estimator import (
     search_material_candidates,
 )
 from smeta_estimator.models import MaterialRateCandidate, RateCandidate
+from smeta_estimator.pricing_metadata import build_pricing_metadata
+from smeta_estimator.fsnb_client import DEFAULT_ARCHIVE_URL
 from smeta_estimator.regional_pricing_client import (
     BENCHMARK_PRICE_ZONES,
+    fetch_wage_act_file_name,
     fetch_load_works_by_auto,
     fetch_transport_filter_values,
     fetch_transportation_by_auto,
@@ -126,6 +131,10 @@ def main() -> int:
         "--period-label",
         default="3 квартал 2026 г.",
         help="Только для подписи в выводе — не влияет на запрос",
+    )
+    parser.add_argument(
+        "--json-out",
+        help="Записать структурированный итог (метаданные источника расчёта + итоговая сумма) в JSON-файл",
     )
     parser.add_argument("--top-n", type=int, default=3, help="Кандидатов на строку")
     parser.add_argument(
@@ -203,6 +212,7 @@ def main() -> int:
     print(f"\n=== Шаг 3: региональные цены и индексы ГОСР — {args.region}, период {args.period_id} ===")
     zone = {**PILOT_PRICE_ZONES, **BENCHMARK_PRICE_ZONES}[args.region]
     price_zone_id = int(zone["price_zone_id"])
+    price_fetched_at = datetime.now().astimezone()
     current_prices = {
         **parse_current_prices_json(
             fetch_current_prices_json(price_zone_id, args.period_id, "materials")
@@ -215,6 +225,24 @@ def main() -> int:
         ),
     }
     gosr_index = parse_gosr_workbook(fetch_gosr_report(price_zone_id, args.period_id))
+    metadata = build_pricing_metadata(
+        catalog_files={
+            name: archive_files[name] for name in (GESN_FILENAME, GESNR_FILENAME, GESNM_FILENAME)
+        },
+        archive_url=DEFAULT_ARCHIVE_URL,
+        region=args.region,
+        period_label=args.period_label,
+        period_id=args.period_id,
+        price_zone_id=price_zone_id,
+        wage_act_file_name=fetch_wage_act_file_name(price_zone_id, args.period_id),
+        price_fetched_at=price_fetched_at,
+    )
+    print("  Источник расчёта (метаданные):")
+    print(
+        f"    нормы: {metadata.catalog_source}, версия файлов от {metadata.catalog_version_date}; "
+        f"регион: {metadata.region}, квартал: {metadata.region_index_period}; "
+        f"акт оплаты труда: {metadata.wage_act}; цены ФГИС ЦС запрошены {metadata.fgiscs_price_fetched_at}"
+    )
     print(f"  Текущих цен/ставок по кодам: {len(current_prices)}, индексов ГОСР: {len(gosr_index)}")
 
     print("\n=== Шаг 4: подбор кандидатов и цена по каждой строке ===")
@@ -514,6 +542,19 @@ def main() -> int:
     print(f"Строк, для которых выбран каталог материалов (не работ): {material_row_count}")
     print(f"Строк, найденных точным кодом из «Обоснования» (без текстового поиска): {exact_code_row_count}")
     print(f"Строк транспорта/ПРР, оценённых по справочнику ФГИС ЦС (по описанию): {transport_row_count}")
+
+    print("\n=== Метаданные источника расчёта (pricing_metadata) ===")
+    print(json.dumps(metadata.to_dict(), ensure_ascii=False, indent=2))
+    if args.json_out:
+        Path(args.json_out).write_text(
+            json.dumps(
+                {"grand_total": round(grand_total, 2), "pricing_metadata": metadata.to_dict()},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"Структурированный итог записан: {args.json_out}")
 
     if args.force_text_search:
         pct = (

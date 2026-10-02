@@ -35,6 +35,7 @@ from datetime import date
 from profitability_estimator.models import CostEstimate
 
 from .models import MatchResult
+from .pricing_metadata import PricingMetadata
 
 AGENT_NAME = "agent_4_smeta_estimator"
 
@@ -69,6 +70,10 @@ class SmetaCostResult:
     priced_line_items: int
     unpriced_line_items: list[str] = field(default_factory=list)
     partially_priced_line_items: list[str] = field(default_factory=list)
+    # На какой версии нормативной базы/региональном квартале/акте посчитано —
+    # см. pricing_metadata.py. Необязательно: вызывающий код без этих
+    # сведений (старые вызовы/тесты) ничего не теряет.
+    pricing_metadata: PricingMetadata | None = None
 
     def is_complete(self) -> bool:
         return not self.unpriced_line_items and not self.partially_priced_line_items
@@ -100,6 +105,7 @@ def build_cost_estimate(
     as_of_date: date,
     region_name: str,
     period_label: str,
+    pricing_metadata: PricingMetadata | None = None,
 ) -> SmetaCostResult:
     if not line_items:
         raise ValueError("Список позиций сметы пуст — нечего сводить в себестоимость")
@@ -152,4 +158,5 @@ def build_cost_estimate(
         priced_line_items=priced_count,
         unpriced_line_items=unpriced,
         partially_priced_line_items=partially_priced,
+        pricing_metadata=pricing_metadata,
     )
