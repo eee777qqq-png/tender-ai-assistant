@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import pytest
 
 from smeta_estimator.models import GesnResourceUsage, MachineLabourInfo, MaterialRateCandidate, RateCandidate
+from smeta_estimator.order_modifiers import OrderModifier
 from smeta_estimator.pricing import (
     price_candidate_for_region,
     price_candidates_for_region,
@@ -315,3 +316,203 @@ def test_price_material_candidates_for_region_prices_every_candidate_in_the_list
     priced = price_material_candidates_for_region(candidates, current_prices={"A": 10.0}, gosr_index={})
 
     assert [c.unit_price for c in priced] == [10.0, 10.0]
+
+
+# --- OrderModifier (найдено на реальном документе "потолок", 2026-09-30,
+# см. CLAUDE.md открытый п.19, order_modifiers.py) — множитель применяется
+# к КОЛИЧЕСТВУ ресурса, по категории (рабочие/машины/машинисты/материалы). ---
+
+
+def test_modifier_scales_labour_quantity_by_ozp():
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="1-100-38", resource_name="рабочий", quantity=10.0)]
+    )
+    modifier = OrderModifier(ozp=1.15, em=1.25, zpm=1.25, mat=1.0)
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={"1-100-38": 100.0},
+        gosr_index={},
+        resource_base_prices={},
+        modifier=modifier,
+    )
+
+    # 10 * 1.15 = 11.5 -> 11.5 * 100 = 1150, не 1000 (без модификатора).
+    assert priced.priced.total_price == pytest.approx(1150.0)
+    assert priced.priced.resolutions[0].quantity == pytest.approx(11.5)
+
+
+def test_modifier_scales_machinist_quantity_by_zpm_not_ozp():
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="4-100-060", resource_name="машинист", quantity=10.0)]
+    )
+    # ozp и zpm разные — проверяем, что код "4-100-XXX" использует zpm,
+    # а не общий шаблон "N-100-XXX" (ozp).
+    modifier = OrderModifier(ozp=1.15, em=1.25, zpm=0.7, mat=1.0)
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={"4-100-060": 100.0},
+        gosr_index={},
+        resource_base_prices={},
+        modifier=modifier,
+    )
+
+    assert priced.priced.total_price == pytest.approx(700.0)  # 10 * 0.7 * 100
+
+
+def test_modifier_scales_machine_quantity_by_em():
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="91.05.01-017", resource_name="кран", quantity=4.0)]
+    )
+    modifier = OrderModifier(ozp=1.0, em=1.25, zpm=1.0, mat=1.0)
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={"91.05.01-017": 100.0},
+        gosr_index={},
+        resource_base_prices={},
+        modifier=modifier,
+    )
+
+    assert priced.priced.total_price == pytest.approx(500.0)  # 4 * 1.25 * 100
+
+
+def test_modifier_scales_material_quantity_by_mat_including_zero():
+    # Реальный случай (571/пр п.83/84, демонтаж) — МАТ=0: материалы,
+    # заложенные в норму монтажа, не расходуются при демонтаже.
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="01.7.15.06-0124", resource_name="гвозди", quantity=5.0)]
+    )
+    modifier = OrderModifier(ozp=0.4, em=0.4, zpm=0.4, mat=0.0)
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={"01.7.15.06-0124": 100.0},
+        gosr_index={},
+        resource_base_prices={},
+        modifier=modifier,
+    )
+
+    assert priced.priced.total_price == pytest.approx(0.0)
+    assert priced.priced.resolutions[0].quantity == pytest.approx(0.0)
+
+
+def test_no_modifier_keeps_quantity_unchanged():
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="1-100-38", resource_name="рабочий", quantity=10.0)]
+    )
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={"1-100-38": 100.0},
+        gosr_index={},
+        resource_base_prices={},
+    )
+
+    assert priced.priced.total_price == pytest.approx(1000.0)
+
+
+def test_modifier_applies_across_aggregate_rollup_and_unresolved_resources_too():
+    # Модификатор масштабирует quantity ДО проверки категории ресурса —
+    # для честной диагностики (--show-resources) даже у рекапов/unresolved,
+    # хотя на их итоговый вклад в total_price это не влияет (0/None).
+    candidate = make_candidate(
+        [
+            GesnResourceUsage(resource_code="2", resource_name="ЭМ", quantity=10.0),
+            GesnResourceUsage(resource_code="X", resource_name="абстрактный", quantity=4.0, is_abstract=True),
+        ]
+    )
+    modifier = OrderModifier(ozp=1.0, em=2.0, zpm=1.0, mat=1.0)
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="г. Москва",
+        period_label="3 квартал 2026 г.",
+        current_prices={},
+        gosr_index={},
+        resource_base_prices={},
+        modifier=modifier,
+    )
+
+    aggregate = next(r for r in priced.priced.resolutions if r.resource_code == "2")
+    abstract = next(r for r in priced.priced.resolutions if r.resource_code == "X")
+    assert aggregate.quantity == pytest.approx(10.0)  # код "2" не начинается с "9X." -> категория "mat", mat=1.0
+    assert abstract.quantity == pytest.approx(4.0)  # тоже категория "mat"
+
+
+# --- Ресурс, обнулённый в документе внутри позиции (замена ресурса
+# отдельной строкой — реальный документ МО, 2026-10-02, см. CLAUDE.md
+# открытый п.17) — не оценивается по норме каталога, иначе двойной счёт. ---
+
+
+def test_zeroed_resource_contributes_nothing_and_is_not_unresolved():
+    candidate = make_candidate(
+        [
+            GesnResourceUsage(resource_code="1-100-32", resource_name="рабочий", quantity=106.0),
+            GesnResourceUsage(resource_code="06.2.02.01-0061", resource_name="плитка", quantity=102.0),
+        ]
+    )
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="Московская область",
+        period_label="3 квартал 2026 г.",
+        current_prices={"1-100-32": 500.0, "06.2.02.01-0061": 1200.0},
+        gosr_index={},
+        resource_base_prices={},
+        zeroed_resource_codes=frozenset({"06.2.02.01-0061"}),
+    )
+
+    # Только труд: 106 * 500 — плитка (102 * 1200 = 122 400) не входит.
+    assert priced.priced.total_price == pytest.approx(53000.0)
+    tile = priced.priced.resolutions[1]
+    assert tile.source == "zeroed_in_document"
+    assert tile.line_total == 0.0
+    assert priced.priced.unresolved_resource_codes == []
+
+
+def test_without_zeroed_codes_resource_is_priced_by_norm_as_before():
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="06.2.02.01-0061", resource_name="плитка", quantity=102.0)]
+    )
+
+    priced = price_candidate_for_region(
+        candidate,
+        region_name="Московская область",
+        period_label="3 квартал 2026 г.",
+        current_prices={"06.2.02.01-0061": 1200.0},
+        gosr_index={},
+        resource_base_prices={},
+    )
+
+    assert priced.priced.total_price == pytest.approx(122400.0)
+    assert priced.priced.resolutions[0].source == "current_price"
+
+
+def test_zeroed_codes_are_passed_through_price_candidates_for_region():
+    candidate = make_candidate(
+        [GesnResourceUsage(resource_code="06.2.02.01-0061", resource_name="плитка", quantity=102.0)]
+    )
+
+    priced = price_candidates_for_region(
+        [candidate, candidate],
+        region_name="Московская область",
+        period_label="3 квартал 2026 г.",
+        current_prices={"06.2.02.01-0061": 1200.0},
+        gosr_index={},
+        resource_base_prices={},
+        zeroed_resource_codes=frozenset({"06.2.02.01-0061"}),
+    )
+
+    assert [c.priced.total_price for c in priced] == [0.0, 0.0]

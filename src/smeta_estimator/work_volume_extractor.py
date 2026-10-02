@@ -36,8 +36,21 @@ _UNIT_HEADER_WORDS = ("ед. изм", "ед.изм", "единица измер�
 _QUANTITY_HEADER_WORDS = ("количество", "кол-во", "кол во", "объём", "объем")
 
 # Число с возможным пробелом-разделителем тысяч и запятой/точкой как
-# десятичным разделителем — "1 234,5", "1234.5", "250".
-_NUMBER_RE = re.compile(r"^[\d\s]+([.,]\d+)?$")
+# десятичным разделителем — "1 234,5", "1234.5", "250". Необязательный
+# ведущий минус (обычный дефис или типографский "−", U+2212 — реальный ЛСР
+# может использовать любой в зависимости от локали Excel) — найдено на
+# реальном документе (тендер №0373100025626000005, "roof", позиция "7",
+# 2026-09-30): строка-«вычет», которой сметчик убирает из позиции ГЭСН
+# нормативный ресурс (не абстрактный "П", обычный с уже посчитанной ценой)
+# и заменяет его на отдельную строку с реально применённым материалом —
+# без поддержки минуса такая строка тихо пропадала при парсинге ("не
+# распознано" по тому же пути, что итоговые/пустые строки), и наш итог
+# переплачивал ровно на стоимость незачтённого вычета (см. CLAUDE.md,
+# открытый п.19). Ниже по цепочке (`extract_work_volume_rows()`,
+# `estimate_smeta_document.py`, `cost_estimate.build_cost_estimate()`) знак
+# `quantity` не нужно обрабатывать отдельно — везде это простое умножение
+# цены на объём, отрицательный объём уже вычитает сам по себе.
+_NUMBER_RE = re.compile(r"^[-−]?[\d\s]+([.,]\d+)?$")
 
 # Маркеры колонки "№ п/п" в заголовке — найдено на реальной смете
 # (ГРАНД-Смета): в ней вложенные строки ресурсов/труда/накладных расходов
@@ -81,6 +94,19 @@ _POSITION_NUMBER_RE = re.compile(r"^\d+(\.\d+)?$")
 # её одно слово "коэффициент" без "всего" не отличило бы от нужной.
 _QUANTITY_SCALED_HEADER_WORDS = ("всего", "коэффициент")
 
+# Признак вложенной строки-ссылки на пункт приказа ("421/пр_2020_п.58_пп.б",
+# "571/пр_2022_п.83_т.2_стр.3_стб.3") — реальный сметчик пишет такую ссылку
+# отдельной строкой сразу после позиции, когда переиспользует код ГЭСН не по
+# прямому назначению и корректирует норму модификатором условий (найдено на
+# реальном документе "потолок", 2026-09-30, см. CLAUDE.md открытый п.19).
+# Здесь — только дешёвый фильтр "похоже на ссылку вообще" (обычные коды
+# ресурсов вида "1-100-38"/"08.3.05.05-0055" никогда не содержат "/пр"), не
+# полный разбор — точную нормализацию и сверку со справочником модификаторов
+# делает `order_modifiers.normalize_order_reference()`/`resolve_order_modifiers()`,
+# сознательно в отдельном модуле, чтобы не сцеплять эту эвристику извлечения
+# таблиц с содержательным справочником коэффициентов.
+_ORDER_REFERENCE_HINT_RE = re.compile(r"\d+/пр", re.IGNORECASE)
+
 
 @dataclass
 class WorkVolumeRow:
@@ -88,11 +114,40 @@ class WorkVolumeRow:
     единица измерения (как написана в документе, без нормализации к
     единицам ГЭСН — сверка единиц остаётся на эксперте), количество.
 
+    `quantity` может быть отрицательным — строка-«вычет» (сметчик убирает
+    ресурс, уже посчитанный внутри нормы ГЭСН, отдельной строкой с
+    отрицательным количеством, заменяя его на реально применённый материал,
+    см. `_NUMBER_RE` выше) обрабатывается наравне с обычной строкой, знак
+    сохраняется как есть, не отбрасывается.
+
     `code` — сырой текст колонки "Обоснование" этой строки (например,
     "ГЭСНр 68-02-004-04"), если такая колонка нашлась в заголовке и ячейка
     не пуста, иначе `None`. Не нормализован — нормализация и поиск по
     каталогу — в `code_lookup.py`, эта модель только выгружает то, что было
-    в файле, как есть."""
+    в файле, как есть.
+
+    `modifier_references` — сырые ссылки на пункт приказа (например,
+    "421/пр_2020_п.58_пп.б"), найденные во вложенных строках ЭТОЙ позиции —
+    реальный сметчик пишет их отдельной строкой сразу после позиции, когда
+    переиспользует код ГЭСН не по прямому назначению (демонтажный код как
+    монтажный, или наоборот) и корректирует норму модификатором условий
+    производства работ (найдено на реальном документе "потолок",
+    2026-09-30, см. CLAUDE.md открытый п.19). Не нормализовано и не
+    проверено по справочнику здесь — это делает `order_modifiers.
+    resolve_order_modifiers()`, эта модель только собирает сырые строки.
+
+    `zeroed_resource_codes` — сырые коды ресурсов ВНУТРИ этой позиции,
+    которые сам документ явно обнулил: норма в колонке "Количество" > 0, а
+    "…всего с учётом коэффициентов" = 0. Типовая практика «замены ресурса»
+    в «Строительном эксперте»: сметчик зануляет нормативный ресурс позиции и
+    ставит реально применённый материал отдельной строкой — часто с ДРУГИМ
+    кодом (найдено на реальном документе МО, тендер №0337100017726000168,
+    2026-10-02: поз. 9 ГЭСН 11-01-027-03 обнуляет плитку 06.2.02.01-0061,
+    замена — поз. 10, плитка 06.2.02.01-0083). Поэтому сопоставлять код
+    обнулённого ресурса с кодом замены нельзя — доверяем самому факту
+    обнуления (`pricing.price_candidate_for_region(zeroed_resource_codes=...)`).
+    Собирается только когда колонка "…всего с учётом коэффициентов" нашлась
+    в заголовке — без неё отличить обнуление не на чем."""
 
     name: str
     unit: str
@@ -100,13 +155,16 @@ class WorkVolumeRow:
     table_index: int
     row_index: int
     code: str | None = None
+    modifier_references: list[str] = field(default_factory=list)
+    zeroed_resource_codes: list[str] = field(default_factory=list)
 
 
 def _parse_quantity(raw: str) -> float | None:
     cleaned = raw.replace("\xa0", " ").strip()
     if not _NUMBER_RE.match(cleaned):
         return None
-    cleaned = cleaned.replace(" ", "").replace(",", ".")
+    # Типографский минус "−" -> обычный дефис, иначе float() его не поймёт.
+    cleaned = cleaned.replace("−", "-").replace(" ", "").replace(",", ".")
     try:
         return float(cleaned)
     except ValueError:
@@ -151,6 +209,18 @@ def _find_quantity_scaled_column(row: list[str], qty_idx: int) -> int | None:
         if all(w in low for w in _QUANTITY_SCALED_HEADER_WORDS):
             return i
     return None
+
+
+def _is_zeroed_resource_row(row: list[str], qty_idx: int, qty_scaled_idx: int | None) -> bool:
+    """Вложенная строка ресурса, которую документ явно обнулил: норма
+    ("Количество") — число больше нуля, а "…всего с учётом коэффициентов" —
+    ровно 0. Пустая ячейка или не-число (например, "П" у категорийного
+    ресурса) — НЕ обнуление, не гадаем."""
+    if qty_scaled_idx is None or max(qty_idx, qty_scaled_idx) >= len(row):
+        return False
+    norm = _parse_quantity(row[qty_idx])
+    scaled = _parse_quantity(row[qty_scaled_idx])
+    return norm is not None and norm > 0 and scaled == 0
 
 
 def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
@@ -207,6 +277,12 @@ def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
         header_cols: tuple[int, int, int, int | None, int | None] | None = None
         qty_scaled_idx: int | None = None
         parent_position: str | None = None
+        # Последняя извлечённая позиция, к которой относятся следующие за ней
+        # вложенные строки (ресурсы, ссылки на приказ). Сбрасывается на любой
+        # строке с номером позиции — даже если саму позицию пришлось
+        # пропустить (нет числа и т.п.), иначе её ресурсы ошибочно
+        # прилипли бы к предыдущей позиции.
+        current_row: WorkVolumeRow | None = None
         for row_index, row in enumerate(table):
             if header_cols is None:
                 header_cols = _find_header(row)
@@ -225,7 +301,22 @@ def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
                     # Нет настоящего номера позиции в этой колонке — строка
                     # ресурса/труда/накладных расходов внутри позиции, не
                     # самостоятельная работа. Пропускаем, не гадаем.
+                    #
+                    # Исключение — ссылка на пункт приказа (модификатор
+                    # условий, см. _ORDER_REFERENCE_HINT_RE выше): она тоже
+                    # вложенная строка без номера позиции, но несёт значимую
+                    # информацию для ПОСЛЕДНЕЙ уже извлечённой позиции этой
+                    # же таблицы, а не сама по себе отдельная строка.
+                    if code_idx is not None and code_idx < len(row) and current_row is not None:
+                        nested_code = row[code_idx].strip()
+                        if nested_code and _ORDER_REFERENCE_HINT_RE.search(nested_code):
+                            current_row.modifier_references.append(nested_code)
+                        elif nested_code and _is_zeroed_resource_row(row, qty_idx, qty_scaled_idx):
+                            # Ресурс внутри позиции, явно обнулённый в
+                            # документе (см. WorkVolumeRow.zeroed_resource_codes).
+                            current_row.zeroed_resource_codes.append(nested_code)
                     continue
+                current_row = None
 
             name = row[name_idx].strip()
             unit = row[unit_idx].strip()
@@ -264,16 +355,15 @@ def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
                 raw_code = row[code_idx].strip()
                 code = raw_code or None
 
-            rows.append(
-                WorkVolumeRow(
-                    name=name,
-                    unit=unit,
-                    quantity=quantity,
-                    table_index=table_index,
-                    row_index=row_index,
-                    code=code,
-                )
+            current_row = WorkVolumeRow(
+                name=name,
+                unit=unit,
+                quantity=quantity,
+                table_index=table_index,
+                row_index=row_index,
+                code=code,
             )
+            rows.append(current_row)
     return rows
 
 

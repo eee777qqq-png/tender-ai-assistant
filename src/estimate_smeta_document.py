@@ -89,6 +89,7 @@ from smeta_estimator import (
     parse_worker_salary_registry,
     price_candidates_for_region,
     price_material_candidates_for_region,
+    resolve_order_modifiers,
     search_candidates,
     search_material_candidates,
 )
@@ -206,6 +207,7 @@ def main() -> int:
     print(f"  (порог уверенности: {MATCH_SCORE_THRESHOLD:.2f} — см. докстринг search.py)")
     grand_total = 0.0
     unresolved_rows: list[str] = []
+    unmatched_rows: list[str] = []
     material_row_count = 0
 
     exact_code_row_count = 0
@@ -309,6 +311,40 @@ def main() -> int:
             unresolved_rows.append(row.name)
             continue
 
+        # Модификатор условий из ссылки на пункт приказа в «Обосновании»
+        # (найдено на реальном документе "потолок", 2026-09-30, см.
+        # order_modifiers.py и CLAUDE.md открытый п.19) — только для позиций
+        # с полным разбором по ресурсам ГЭСН ("work"), у материалов нет
+        # ресурсной структуры, к которой можно применить ОЗП/ЭМ/ЗПМ/МАТ.
+        resolved_modifiers = resolve_order_modifiers(row.modifier_references)
+        if resolved_modifiers.unmatched_references:
+            unmatched_rows.append(row.name)
+            print(
+                "  ⚠ Ссылка на пункт приказа в «Обосновании» "
+                f"({', '.join(resolved_modifiers.unmatched_references)}) не найдена в справочнике "
+                "модификаторов (order_modifiers.ORDER_MODIFIER_REGISTRY) — цена ниже БЕЗ модификатора, "
+                "source=\"unmatched_modifier_reference\", нужна проверка эксперта."
+            )
+        if source == "work" and resolved_modifiers.combined is not None:
+            m = resolved_modifiers.combined
+            print(
+                f"  Найден модификатор условий из «Обоснования» ({', '.join(resolved_modifiers.matched_references)}): "
+                f"ОЗП×{m.ozp:g}, ЭМ×{m.em:g}, ЗПМ×{m.zpm:g}, МАТ×{m.mat:g}."
+            )
+
+        # Ресурсы внутри позиции, явно обнулённые в самом документе (замена
+        # ресурса отдельной строкой — см. WorkVolumeRow.zeroed_resource_codes
+        # и CLAUDE.md, открытый п.17) — не считаем их по норме каталога,
+        # иначе материал учитывается дважды (норма + строка-замена).
+        zeroed_codes = frozenset(
+            code for code in (normalize_gesn_code(c) for c in row.zeroed_resource_codes) if code
+        )
+        if source == "work" and zeroed_codes:
+            print(
+                "  Ресурсы, обнулённые в документе внутри этой позиции (не считаются по норме): "
+                f"{', '.join(sorted(zeroed_codes))}."
+            )
+
         if source == "work":
             priced = price_candidates_for_region(
                 work_candidates,
@@ -318,6 +354,8 @@ def main() -> int:
                 gosr_index=gosr_index,
                 resource_base_prices=resource_base_prices,
                 machine_labour=machine_labour,
+                modifier=resolved_modifiers.combined,
+                zeroed_resource_codes=zeroed_codes,
             )
             for c in priced:
                 row_total = c.priced.total_price * row.quantity
@@ -337,6 +375,9 @@ def main() -> int:
             if args.show_resources:
                 print(f"    Разбивка по ресурсам топ-1 ({top.code}):")
                 for res in top.priced.resolutions:
+                    if res.source == "zeroed_in_document":
+                        print(f"      {res.resource_code} «{res.resource_name}» — обнулён в документе (zeroed_in_document), 0 руб.")
+                        continue
                     if res.source == "unresolved":
                         print(f"      {res.resource_code} «{res.resource_name}» x{res.quantity} — не определена (unresolved)")
                         continue
@@ -429,6 +470,14 @@ def main() -> int:
     if unresolved_rows:
         print(f"\nСтроки без единого кандидата ({len(unresolved_rows)}):")
         for name in unresolved_rows:
+            print(f"  - {name}")
+
+    if unmatched_rows:
+        print(
+            f"\nСтроки со ссылкой на пункт приказа без справочника модификаторов ({len(unmatched_rows)}) "
+            "— цена посчитана БЕЗ модификатора, нужна проверка эксперта (см. order_modifiers.py):"
+        )
+        for name in unmatched_rows:
             print(f"  - {name}")
 
     return 0

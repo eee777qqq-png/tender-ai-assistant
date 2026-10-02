@@ -20,6 +20,13 @@ from .fsnb_parser import (
 )
 from .matcher import AGENT_NAME, match_work_item, review_match_result
 from .material_candidates import AbstractResourceCandidates, suggest_material_candidates
+from .order_modifiers import (
+    ORDER_MODIFIER_REGISTRY,
+    OrderModifier,
+    ResolvedOrderModifiers,
+    normalize_order_reference,
+    resolve_order_modifiers,
+)
 from .models import (
     GesnResourceUsage,
     GesnWorkItem,
@@ -100,8 +107,11 @@ __all__ = [
     "MaterialCandidateInfo",
     "MaterialRateCandidate",
     "MatchResult",
+    "ORDER_MODIFIER_REGISTRY",
+    "OrderModifier",
     "RateCandidate",
     "RegionalPriceResult",
+    "ResolvedOrderModifiers",
     "ResourcePriceResolution",
     "SmetaCostResult",
     "SmetaLineItem",
@@ -131,6 +141,7 @@ __all__ = [
     "get_active_period_id",
     "match_work_item",
     "normalize_gesn_code",
+    "normalize_order_reference",
     "parse_current_prices_json",
     "parse_fsbc_machine_labour_xml",
     "parse_fsbc_machines_xml",
@@ -144,6 +155,7 @@ __all__ = [
     "price_candidates_for_region",
     "price_material_candidate_for_region",
     "price_material_candidates_for_region",
+    "resolve_order_modifiers",
     "resolve_resource_unit_price",
     "review_match_result",
     "search_candidates",

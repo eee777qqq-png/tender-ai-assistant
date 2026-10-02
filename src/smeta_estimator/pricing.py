@@ -61,6 +61,7 @@ quantity` машинных ресурсов, уже добавляемых ни�
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 from .models import (
@@ -70,6 +71,7 @@ from .models import (
     RegionalPriceResult,
     ResourcePriceResolution,
 )
+from .order_modifiers import OrderModifier
 from .regional_pricing_parser import GosrIndexEntry
 
 # Голые (без дефиса) коды трудозатрат — итоговые рекап-строки «Затраты
@@ -77,6 +79,37 @@ from .regional_pricing_parser import GosrIndexEntry
 # докстринг модуля). Только эти два значения встречаются во всём каталоге
 # ГЭСН+ГЭСНр — проверено сканированием всех 34004 позиций 2026-09-30.
 _AGGREGATE_LABOUR_CODES = frozenset({"1", "2"})
+
+# Категория ресурса для применения `OrderModifier` (см. order_modifiers.py,
+# найдено на реальном документе "потолок", 2026-09-30, CLAUDE.md открытый
+# п.19) — множитель модификатора применяется к КОЛИЧЕСТВУ ресурса, по той
+# же категории, что и в тексте самого приказа (ОЗП/ЭМ/ЗПМ/МАТ). Машинисты
+# ("4-100-XXX") проверяются ПЕРЕД общим шаблоном рабочих — код машиниста
+# тоже подходит под общий шаблон "N-100-XXX".
+_LABOUR_MACHINIST_RE = re.compile(r"^4-100-")
+_LABOUR_WORKER_RE = re.compile(r"^\d+-100-")
+_MACHINE_RE = re.compile(r"^9\d\.")
+
+
+def _resource_category(resource_code: str) -> str:
+    if _LABOUR_MACHINIST_RE.match(resource_code):
+        return "zpm"
+    if _LABOUR_WORKER_RE.match(resource_code):
+        return "ozp"
+    if _MACHINE_RE.match(resource_code):
+        return "em"
+    return "mat"
+
+
+def _apply_modifier(quantity: float, resource_code: str, modifier: OrderModifier | None) -> float:
+    """`modifier is None` — обычная позиция без ссылки на пункт приказа,
+    поведение не меняется (количество как в норме ГЭСН). С модификатором —
+    масштабирует по категории ресурса (см. `_resource_category()`), ровно
+    так же, как это делает сам сметчик в колонке "коэффициенты" реальной
+    сметы (найдено и подтверждено на реальных числах, см. order_modifiers.py)."""
+    if modifier is None:
+        return quantity
+    return quantity * getattr(modifier, _resource_category(resource_code))
 
 
 def resolve_resource_unit_price(
@@ -119,6 +152,8 @@ def price_candidate_for_region(
     gosr_index: dict[str, GosrIndexEntry],
     resource_base_prices: dict[str, float],
     machine_labour: dict[str, MachineLabourInfo] | None = None,
+    modifier: OrderModifier | None = None,
+    zeroed_resource_codes: frozenset[str] | set[str] | None = None,
 ) -> RateCandidate:
     """`resource_base_prices` — код ресурса -> базисная цена на 01.01.2022,
     то, что уже посчитано `fsnb_parser.parse_fsbc_materials_xml`/
@@ -132,21 +167,54 @@ def price_candidate_for_region(
     поведение как раньше, без добавки оплаты труда машиниста (см. докстринг
     модуля про независимое подтверждение этой добавки).
 
+    `modifier` — необязательный `OrderModifier` (см. `order_modifiers.py`),
+    найденный по ссылке на пункт приказа в «Обосновании» конкретной строки
+    сметы (не самого кандидата каталога — один и тот же код ГЭСН может быть
+    с модификатором в одной позиции документа и без него в другой, поэтому
+    модификатор передаётся вызывающим кодом на уровне строки сметы, не
+    хранится в `RateCandidate`/`GesnWorkItem`). `None` — поведение как
+    раньше, без изменений (количество берётся прямо из нормы ГЭСН).
+
+    `zeroed_resource_codes` — коды ресурсов, которые конкретная строка
+    сметы явно обнулила внутри этой позиции (`WorkVolumeRow.
+    zeroed_resource_codes`, уже нормализованные вызывающим кодом через
+    `code_lookup.normalize_gesn_code()`). Такой ресурс не оценивается по
+    норме каталога вообще — `source="zeroed_in_document"`, вклад 0: доверяем
+    факту обнуления в документе, а не пытаемся угадать, какая отдельная
+    строка его заменила (коды нормы и замены в реальных документах
+    различаются, см. CLAUDE.md). Сама строка-замена считается как обычно,
+    своей отдельной строкой сметы. `None` — поведение как раньше.
+
     Возвращает **новый** объект `RateCandidate` (не мутирует исходный).
     """
     machine_labour = machine_labour or {}
+    zeroed_resource_codes = zeroed_resource_codes or frozenset()
     resolutions: list[ResourcePriceResolution] = []
     total = 0.0
 
     for usage in candidate.resources:
+        quantity = _apply_modifier(usage.quantity, usage.resource_code, modifier)
+
         if usage.resource_code in _AGGREGATE_LABOUR_CODES:
             resolutions.append(
                 ResourcePriceResolution(
                     resource_code=usage.resource_code,
                     resource_name=usage.resource_name,
-                    quantity=usage.quantity,
+                    quantity=quantity,
                     unit_price=0.0,
                     source="aggregate_rollup",
+                )
+            )
+            continue
+
+        if usage.resource_code in zeroed_resource_codes:
+            resolutions.append(
+                ResourcePriceResolution(
+                    resource_code=usage.resource_code,
+                    resource_name=usage.resource_name,
+                    quantity=0.0,
+                    unit_price=0.0,
+                    source="zeroed_in_document",
                 )
             )
             continue
@@ -156,7 +224,7 @@ def price_candidate_for_region(
                 ResourcePriceResolution(
                     resource_code=usage.resource_code,
                     resource_name=usage.resource_name,
-                    quantity=usage.quantity,
+                    quantity=quantity,
                     unit_price=None,
                     source="unresolved",
                 )
@@ -172,7 +240,7 @@ def price_candidate_for_region(
                 ResourcePriceResolution(
                     resource_code=usage.resource_code,
                     resource_name=usage.resource_name,
-                    quantity=usage.quantity,
+                    quantity=quantity,
                     unit_price=None,
                     source="unresolved",
                 )
@@ -180,7 +248,7 @@ def price_candidate_for_region(
             continue
 
         resolution.resource_name = usage.resource_name
-        resolution.quantity = usage.quantity
+        resolution.quantity = quantity
 
         labour = machine_labour.get(usage.resource_code)
         if labour is not None and labour.labour_mach > 0:
@@ -193,7 +261,7 @@ def price_candidate_for_region(
                     ResourcePriceResolution(
                         resource_code=usage.resource_code,
                         resource_name=usage.resource_name,
-                        quantity=usage.quantity,
+                        quantity=quantity,
                         unit_price=None,
                         source="unresolved",
                     )
@@ -204,7 +272,7 @@ def price_candidate_for_region(
             resolution.machinist_wage_added = wage_addition
 
         resolutions.append(resolution)
-        total += resolution.unit_price * usage.quantity  # type: ignore[operator]
+        total += resolution.unit_price * quantity  # type: ignore[operator]
 
     priced = RegionalPriceResult(
         region_name=region_name, period_label=period_label, total_price=total, resolutions=resolutions
@@ -254,10 +322,20 @@ def price_candidates_for_region(
     gosr_index: dict[str, GosrIndexEntry],
     resource_base_prices: dict[str, float],
     machine_labour: dict[str, MachineLabourInfo] | None = None,
+    modifier: OrderModifier | None = None,
+    zeroed_resource_codes: frozenset[str] | set[str] | None = None,
 ) -> list[RateCandidate]:
     return [
         price_candidate_for_region(
-            c, region_name, period_label, current_prices, gosr_index, resource_base_prices, machine_labour
+            c,
+            region_name,
+            period_label,
+            current_prices,
+            gosr_index,
+            resource_base_prices,
+            machine_labour,
+            modifier,
+            zeroed_resource_codes,
         )
         for c in candidates
     ]

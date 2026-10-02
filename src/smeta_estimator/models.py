@@ -166,7 +166,7 @@ class ResourcePriceResolution:
     resource_name: str
     quantity: float
     unit_price: float | None
-    source: str  # "current_price" | "gosr_index" | "unresolved" | "aggregate_rollup"
+    source: str  # "current_price" | "gosr_index" | "unresolved" | "aggregate_rollup" | "zeroed_in_document"
     index_value: float | None = None
     group_name: str | None = None
     machinist_wage_added: float = 0.0
