@@ -107,6 +107,7 @@ from smeta_estimator.fsnb_client import (
     FSBC_MACHINES_FILENAME,
     FSBC_MATERIALS_FILENAME,
     GESN_FILENAME,
+    GESNM_FILENAME,
     GESNR_FILENAME,
 )
 
@@ -180,8 +181,13 @@ def main() -> int:
     # (`apply_code_prefix=True`), не зашит текстом здесь — иначе короткие
     # коды вида "51-01-001-01" коллидировали бы с одноимёнными кодами
     # основного ГЭСН при объединении в один список.
-    catalog = parse_gesn_xml(archive_files[GESN_FILENAME]) + parse_gesn_xml(
-        archive_files[GESNR_FILENAME], apply_code_prefix=True
+    # ГЭСНм (монтаж оборудования) — тот же приём, 2026-10-03: префикс
+    # "ГЭСНм" читается из файла, коды вида "08-03-610-01" иначе коллидируют
+    # с основным ГЭСН.
+    catalog = (
+        parse_gesn_xml(archive_files[GESN_FILENAME])
+        + parse_gesn_xml(archive_files[GESNR_FILENAME], apply_code_prefix=True)
+        + parse_gesn_xml(archive_files[GESNM_FILENAME], apply_code_prefix=True)
     )
     resource_base_prices = {
         **parse_fsbc_materials_xml(archive_files[FSBC_MATERIALS_FILENAME]),
@@ -192,7 +198,7 @@ def main() -> int:
     # Каталог материалов ФСБЦ — для строк ведомости, которые по сути
     # материал/изделие, не нормируемая работа (см. докстринг выше).
     material_catalog = parse_material_catalog_xml(archive_files[FSBC_MATERIALS_FILENAME])
-    print(f"  Позиций в каталоге ГЭСН+ГЭСНр: {len(catalog)}, материалов ФСБЦ: {len(material_catalog)}")
+    print(f"  Позиций в каталоге ГЭСН+ГЭСНр+ГЭСНм: {len(catalog)}, материалов ФСБЦ: {len(material_catalog)}")
 
     print(f"\n=== Шаг 3: региональные цены и индексы ГОСР — {args.region}, период {args.period_id} ===")
     zone = {**PILOT_PRICE_ZONES, **BENCHMARK_PRICE_ZONES}[args.region]

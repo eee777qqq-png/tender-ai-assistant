@@ -157,3 +157,11 @@ def test_classify_unresolved_row_returns_none_for_genuinely_unclear_case():
     # не домысленной.
     assert classify_unresolved_row("12-34-567-89", "Устройство чего-то совершенно нового") is None
     assert classify_unresolved_row(None, "Работа без кода в Обосновании вообще") is None
+
+
+def test_normalize_keeps_gesnm_prefix_like_gesnr():
+    # Реальный код из «Потолка» (2026-10-03): приставка ГЭСНм — часть кода в
+    # каталоге, её нельзя снимать как общую "ГЭСН" (получилось бы "м10-08-...").
+    assert normalize_gesn_code("ГЭСНм10-08-002-02") == "ГЭСНм10-08-002-02"
+    assert normalize_gesn_code("ГЭСНм 08-03-610-01") == "ГЭСНм08-03-610-01"
+    assert normalize_gesn_code("ГЭСН 11-01-027-03") == "11-01-027-03"

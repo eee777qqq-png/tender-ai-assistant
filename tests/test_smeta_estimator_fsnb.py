@@ -22,6 +22,7 @@ from smeta_estimator.fsnb_client import (
     FSBC_MACHINES_FILENAME,
     FSBC_MATERIALS_FILENAME,
     GESN_FILENAME,
+    GESNM_FILENAME,
     GESNR_FILENAME,
     download_fsnb_archive,
     extract_fsnb_files,
@@ -154,11 +155,12 @@ def test_extract_fsnb_files_returns_expected_members():
         zf.writestr(GESNR_FILENAME, b"<base-r/>")
         zf.writestr(FSBC_MATERIALS_FILENAME, b"<x/>")
         zf.writestr(FSBC_MACHINES_FILENAME, b"<y/>")
-        zf.writestr("ГЭСНм.xml", b"<z/>")  # лишний файл — должен быть проигнорирован
+        zf.writestr(GESNM_FILENAME, b"<base-m/>")
+        zf.writestr("ГЭСНмр.xml", b"<z/>")  # лишний файл — должен быть проигнорирован
 
     files = extract_fsnb_files(buf.getvalue())
 
-    assert set(files) == {GESN_FILENAME, GESNR_FILENAME, FSBC_MATERIALS_FILENAME, FSBC_MACHINES_FILENAME}
+    assert set(files) == {GESN_FILENAME, GESNR_FILENAME, GESNM_FILENAME, FSBC_MATERIALS_FILENAME, FSBC_MACHINES_FILENAME}
     assert files[GESN_FILENAME] == b"<base/>"
     assert files[GESNR_FILENAME] == b"<base-r/>"
 

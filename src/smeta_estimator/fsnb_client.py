@@ -42,6 +42,7 @@ ATTRIBUTION_NOTICE = (
 
 GESN_FILENAME = "ГЭСН.xml"
 GESNR_FILENAME = "ГЭСНр.xml"
+GESNM_FILENAME = "ГЭСНм.xml"
 FSBC_MATERIALS_FILENAME = "ФСБЦ_Мат&Оборуд.xml"
 FSBC_MACHINES_FILENAME = "ФСБЦ_Маш.xml"
 
@@ -55,9 +56,10 @@ def download_fsnb_archive(url: str = DEFAULT_ARCHIVE_URL, timeout: int = 120) ->
 def extract_fsnb_files(archive_bytes: bytes) -> dict[str, bytes]:
     """Достаёт из ZIP-архива файлы, нужные для фундамента Агента 4 — основной
     ГЭСН, ГЭСНр (ремонтно-строительные расценки — подключён 2026-09-28, см.
-    CLAUDE.md) и обе части ФСБЦ. Остальные (ГЭСНм/мр/п) в этой версии
-    по-прежнему не разбираются, см. CLAUDE.md, «Известные пробелы»."""
-    wanted = {GESN_FILENAME, GESNR_FILENAME, FSBC_MATERIALS_FILENAME, FSBC_MACHINES_FILENAME}
+    CLAUDE.md), ГЭСНм (монтаж оборудования — подключён 2026-10-03) и обе
+    части ФСБЦ. Остальные (ГЭСНмр/п) в этой версии по-прежнему не
+    разбираются, см. CLAUDE.md, «Известные пробелы»."""
+    wanted = {GESN_FILENAME, GESNR_FILENAME, GESNM_FILENAME, FSBC_MATERIALS_FILENAME, FSBC_MACHINES_FILENAME}
     files: dict[str, bytes] = {}
     with zipfile.ZipFile(BytesIO(archive_bytes)) as zf:
         for name in zf.namelist():
