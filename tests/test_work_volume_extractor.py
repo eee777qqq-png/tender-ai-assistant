@@ -574,3 +574,24 @@ def test_nested_rows_of_skipped_position_do_not_stick_to_previous_position():
 
     assert rows[-1].code == "06.2.02.01-0083"
     assert rows[-1].zeroed_resource_codes == []
+
+
+def test_whole_position_with_negative_coefficient_uses_scaled_quantity():
+    # Реальный документ МО, поз. 6 (2026-10-02): "добавлять или исключать"
+    # — количество 3,64 × коэффициент −9 = −32,76 в колонке "всего с учетом
+    # коэффициентов". Берём итоговое значение, а не норму из "Количество".
+    table = [list(r) for r in _ZEROED_TABLE[:2]] + [
+        [
+            "6",
+            "ГЭСН 11-01-011-13",
+            "Устройство стяжек: на каждые 5 мм изменения толщины стяжки добавлять или исключать к норме 11-01-011-12",
+            "100 м2",
+            "3.64",
+            "-9",
+            "-32.76",
+        ],
+    ]
+    rows = extract_work_volume_rows([table])
+
+    assert len(rows) == 1
+    assert rows[0].quantity == -32.76

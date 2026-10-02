@@ -340,6 +340,19 @@ def extract_work_volume_rows(tables: list[Table]) -> list[WorkVolumeRow]:
             is_child_position = "." in position
             if not is_child_position:
                 parent_position = position or None
+                # Целая позиция тоже может нести коэффициент в самой строке:
+                # реальный документ МО (тендер №0337100017726000168, поз. 6,
+                # 2026-10-02) — "на каждые 5 мм изменения толщины стяжки
+                # добавлять или исключать", "Количество" 3,64 × коэффициент
+                # −9 = −32,76 в "всего с учётом коэффициентов". Без этого
+                # позиция-«исключение» считалась со знаком плюс (+3 279 руб.
+                # вместо −28 963 руб. в самой смете). На всех 4 реальных
+                # документах проекта это единственная целая позиция, где две
+                # колонки расходятся, — у остальных значения совпадают.
+                if qty_scaled_idx is not None and qty_scaled_idx < len(row) and position:
+                    scaled_quantity = _parse_quantity(row[qty_scaled_idx])
+                    if scaled_quantity is not None:
+                        quantity = scaled_quantity
             elif (
                 qty_scaled_idx is not None
                 and parent_position is not None
