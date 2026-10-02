@@ -139,6 +139,11 @@ class MatchCriterion:
     name: str
     passed: bool
     message: str
+    # Провал, который означает не «точно не подходит», а «ТРЕБУЕТ РУЧНОЙ
+    # ПРОВЕРКИ» (узкая специализация не совпала с ОКПД2; находка Агента 3
+    # kind="unclear"). Явный признак для оркестратора (Агент 13,
+    # `orchestrator/router.py`), чтобы не разбирать текст `message`.
+    needs_manual_review: bool = False
 
 
 @dataclass
@@ -282,7 +287,8 @@ def _capacity_criterion(profile: ClientProfile, tender: Tender) -> MatchCriterio
         return MatchCriterion(
             "capacity",
             False,
-            f"ТРЕБУЕТ РУЧНОЙ ПРОВЕРКИ: профиль клиента указывает узкую специализацию "
+            needs_manual_review=True,
+            message=f"ТРЕБУЕТ РУЧНОЙ ПРОВЕРКИ: профиль клиента указывает узкую специализацию "
             f"«{niche_name}» (в профиле: «{profile_text.strip()}»), а закупка — ОКПД2 "
             f"{tender.okpd2_code} «{tender.name}», что похоже на другой вид работ — "
             "сверьте вручную, что клиент может выполнить именно эту закупку.",
@@ -399,7 +405,12 @@ def _participant_requirements_criterion(
         )
 
     message = " ".join(unmet_confirmed + unmet_unclear)
-    return MatchCriterion("participant_requirements_from_documents", False, message)
+    return MatchCriterion(
+        "participant_requirements_from_documents",
+        False,
+        message,
+        needs_manual_review=not unmet_confirmed,
+    )
 
 
 def final_classify(
