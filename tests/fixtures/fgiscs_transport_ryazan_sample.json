@@ -1,0 +1,135 @@
+{
+ "_note": "Реальный фрагмент ответов ФГИС ЦС, Рязанская обл. (priceZoneId=169), 2 кв. 2026 (periodId=426), снят 2026-10-02",
+ "load_works": [
+  {
+   "cargoName": "Щебень (выгрузка учитывает затраты на штабелирование)",
+   "loadCode": "40-1",
+   "loadPrice": "67.99",
+   "unloadCode": "40-2",
+   "unloadPrice": "134.66",
+   "id": 314215
+  },
+  {
+   "cargoName": "Песок (выгрузка учитывает перекидку и штабелирование)",
+   "loadCode": "43-1",
+   "loadPrice": "50.99",
+   "unloadCode": "43-2",
+   "unloadPrice": "114.28",
+   "id": 314218
+  },
+  {
+   "cargoName": "Мусор строительный с погрузкой вручную",
+   "loadCode": "47-1",
+   "loadPrice": "884.84",
+   "unloadCode": "47-2",
+   "unloadPrice": "733.24",
+   "id": 314222
+  },
+  {
+   "cargoName": "Мусор строительный с погрузкой транспортерами",
+   "loadCode": "48-1",
+   "loadPrice": "217.94",
+   "unloadCode": "48-2",
+   "unloadPrice": "0.00",
+   "id": 314223
+  },
+  {
+   "cargoName": "Мусор строительный с погрузкой экскаваторами емкостью ковша до 0,5 м3",
+   "loadCode": "49-1",
+   "loadPrice": "67.99",
+   "unloadCode": "49-2",
+   "unloadPrice": "0.00",
+   "id": 314224
+  },
+  {
+   "cargoName": "Прочие материалы, детали (с использованием погрузчика)",
+   "loadCode": "51-1",
+   "loadPrice": "491.47",
+   "unloadCode": "51-2",
+   "unloadPrice": "369.93",
+   "id": 314226
+  }
+ ],
+ "road_types": [
+  "дороги грунтовые, автозимники",
+  "переходное (булыжное, щебеночное, гравийное) дорожное покрытие",
+  "усовершенствованное (асфальтобетонное, цементобетонное, железобетонное, обработанное органическим вяжущим) дорожное покрытие"
+ ],
+ "vehicle_types": [
+  "Автобетоносмесители",
+  "Автобитумовозы",
+  "Автомобили бортовые",
+  "Автомобили-балковозы",
+  "Автомобили-опоровозы",
+  "Автомобили-панелевозы",
+  "Автомобили-самосвалы",
+  "Автомобили-трубоплетевозы",
+  "Автоцистерны"
+ ],
+ "capacities_samosval": [
+  "до 15 т",
+  "до 30 т"
+ ],
+ "transport_samosval_15t_improved": [
+  {
+   "transportationDistance": 9,
+   "transportation1ClassCode": "02-15-1-01-0009",
+   "price1Class": "210.11",
+   "transportation2ClassCode": "02-15-2-01-0009",
+   "price2Class": "247.19",
+   "transportation3ClassCode": "02-15-3-01-0009",
+   "price3Class": "350.18",
+   "transportation4ClassCode": "02-15-4-01-0009",
+   "price4Class": "466.91",
+   "id": 50753040
+  },
+  {
+   "transportationDistance": 14,
+   "transportation1ClassCode": "02-15-1-01-0014",
+   "price1Class": "251.35",
+   "transportation2ClassCode": "02-15-2-01-0014",
+   "price2Class": "295.71",
+   "transportation3ClassCode": "02-15-3-01-0014",
+   "price3Class": "418.92",
+   "transportation4ClassCode": "02-15-4-01-0014",
+   "price4Class": "558.56",
+   "id": 50753046
+  },
+  {
+   "transportationDistance": 30,
+   "transportation1ClassCode": "02-15-1-01-0030",
+   "price1Class": "347.57",
+   "transportation2ClassCode": "02-15-2-01-0030",
+   "price2Class": "408.91",
+   "transportation3ClassCode": "02-15-3-01-0030",
+   "price3Class": "579.28",
+   "transportation4ClassCode": "02-15-4-01-0030",
+   "price4Class": "772.38",
+   "id": 50753062
+  },
+  {
+   "transportationDistance": 51,
+   "transportation1ClassCode": "02-15-1-01-0051",
+   "price1Class": "475.20",
+   "transportation2ClassCode": "02-15-2-01-0051",
+   "price2Class": "559.06",
+   "transportation3ClassCode": "02-15-3-01-0051",
+   "price3Class": "792.00",
+   "transportation4ClassCode": "02-15-4-01-0051",
+   "price4Class": "1056.00",
+   "id": 50753083
+  },
+  {
+   "transportationDistance": 52,
+   "transportation1ClassCode": "02-15-1-01-0052",
+   "price1Class": "481.09",
+   "transportation2ClassCode": "02-15-2-01-0052",
+   "price2Class": "565.99",
+   "transportation3ClassCode": "02-15-3-01-0052",
+   "price3Class": "801.82",
+   "transportation4ClassCode": "02-15-4-01-0052",
+   "price4Class": "1069.09",
+   "id": 50753084
+  }
+ ]
+}

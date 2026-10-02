@@ -70,6 +70,15 @@ PILOT_PRICE_ZONES: dict[str, dict[str, int | str]] = {
     "Ростовская область": {"subject_id": 342, "price_zone_id": 170, "price_zone_name": "Ростовская область"},
 }
 
+# Регионы вне пилота, нужные только для бенчмарка Агента 4 на реальных
+# сметах из других субъектов (не для мониторинга/матчинга клиентов —
+# скоуп пилота по-прежнему 4 региона выше). Рязанская область — смета
+# «Рыбное» (текущий ремонт кровли прокуратуры, 2026-10-02); id проверены
+# вживую через fetch_country_subjects()/fetch_price_zones().
+BENCHMARK_PRICE_ZONES: dict[str, dict[str, int | str]] = {
+    "Рязанская область": {"subject_id": 343, "price_zone_id": 169, "price_zone_name": "Рязанская область"},
+}
+
 
 def fetch_country_subjects(timeout: int = 30) -> list[dict]:
     response = requests.get(
@@ -204,8 +213,100 @@ def fetch_gosr_report(price_zone_id: int, period_id: int, timeout: int = 120) ->
     return response.content
 
 
+# --- Сметные цены услуг на перевозку и погрузочно-разгрузочные работы
+# (вкладка «Сметные цены услуг на перевозку и погрузочно-разгрузочные
+# работы» на fgiscs.minstroyrf.ru/prices, найдено и проверено вживую
+# 2026-10-02 по JS-бандлу страницы). Те же региональные/квартальные
+# параметры, что и у остальных эндпоинтов. Разбор и сопоставление со
+# строкой сметы — `transport_pricing.py`, здесь только сеть. ---
+
+_SERVICES_URL = f"{BASE_URL}/EstimatedPrice/Services"
+
+
+def _services_params(price_zone_id: int, period_id: int, take: int, **extra: str) -> dict:
+    return {
+        "periodId": period_id,
+        "priceZoneId": price_zone_id,
+        "authorityId": "null",
+        "page": 1,
+        "take": take,
+        "sort": "{}",
+        **extra,
+    }
+
+
+def _fetch_all_items(url: str, params: dict, timeout: int) -> list[dict]:
+    """Эндпоинты услуг возвращают `{"total", "items"}`; `take` здесь
+    берётся с запасом, а полнота сверяется с `total` — неполный ответ —
+    явная ошибка, не тихо урезанный справочник (тот же принцип, что у
+    `fetch_current_prices_json()`)."""
+    response = requests.get(url, params=params, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    items = data.get("items", [])
+    if len(items) < data.get("total", len(items)):
+        raise ValueError(
+            f"{url}: вернулось {len(items)} из {data.get('total')} позиций при take={params.get('take')} — "
+            "справочник неполный, нужна постраничная догрузка."
+        )
+    return items
+
+
+def fetch_load_works_by_auto(price_zone_id: int, period_id: int, timeout: int = 60) -> list[dict]:
+    """Погрузочно-разгрузочные работы при автомобильных перевозках: по
+    каждому виду груза — `cargoName`, `loadCode`/`loadPrice` (погрузка,
+    коды вида "48-1"), `unloadCode`/`unloadPrice` (разгрузка, "48-2"),
+    руб./т."""
+    return _fetch_all_items(
+        f"{_SERVICES_URL}/LoadWorksByAuto", _services_params(price_zone_id, period_id, 1000), timeout
+    )
+
+
+def fetch_transport_filter_values(
+    price_zone_id: int, period_id: int, level: str, timeout: int = 60, **selected: str
+) -> list[str]:
+    """Допустимые значения фильтров таблицы перевозок автотранспортом:
+    `level` — "RoadType" (тип покрытия), "VehicleType" (нужен `roadType`),
+    "VehicleLoadCapacity" (нужны `roadType` и `vehicleType`). Возвращает
+    строки ровно в том написании, которое ждёт эндпоинт данных."""
+    response = requests.get(
+        f"{_SERVICES_URL}/TransportationByAuto/{level}",
+        params=_services_params(price_zone_id, period_id, 25, **selected),
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def fetch_transportation_by_auto(
+    price_zone_id: int,
+    period_id: int,
+    road_type: str,
+    vehicle_type: str,
+    vehicle_load_capacity: str,
+    timeout: int = 120,
+) -> list[dict]:
+    """Цены перевозки 1 т груза автотранспортом для одной комбинации
+    покрытие/тип авто/грузоподъёмность — по строке на каждый км
+    (`transportationDistance` 1..1500), с кодом и ценой для каждого из 4
+    классов груза (`transportationNClassCode`/`priceNClass`, коды вида
+    "02-15-1-01-0030")."""
+    return _fetch_all_items(
+        f"{_SERVICES_URL}/TransportationByAuto/Data",
+        _services_params(
+            price_zone_id,
+            period_id,
+            5000,
+            roadType=road_type,
+            vehicleType=vehicle_type,
+            vehicleLoadCapacity=vehicle_load_capacity,
+        ),
+        timeout,
+    )
+
+
 def _subject_id_for_zone(price_zone_id: int) -> int:
-    for info in PILOT_PRICE_ZONES.values():
+    for info in [*PILOT_PRICE_ZONES.values(), *BENCHMARK_PRICE_ZONES.values()]:
         if info["price_zone_id"] == price_zone_id:
             return info["subject_id"]  # type: ignore[return-value]
     raise ValueError(

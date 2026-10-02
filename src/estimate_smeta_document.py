@@ -94,6 +94,14 @@ from smeta_estimator import (
     search_material_candidates,
 )
 from smeta_estimator.models import MaterialRateCandidate, RateCandidate
+from smeta_estimator.regional_pricing_client import (
+    BENCHMARK_PRICE_ZONES,
+    fetch_load_works_by_auto,
+    fetch_transport_filter_values,
+    fetch_transportation_by_auto,
+)
+from smeta_estimator.transport_pricing import SOURCE_LABEL as TRANSPORT_SOURCE_LABEL
+from smeta_estimator.transport_pricing import TransportPriceBook
 from smeta_estimator.fsnb_client import (
     ATTRIBUTION_NOTICE,
     FSBC_MACHINES_FILENAME,
@@ -109,8 +117,8 @@ def main() -> int:
     parser.add_argument(
         "--region",
         default="г. Москва",
-        choices=list(PILOT_PRICE_ZONES),
-        help="Один из 4 пилотных регионов",
+        choices=[*PILOT_PRICE_ZONES, *BENCHMARK_PRICE_ZONES],
+        help="Один из 4 пилотных регионов (или регион бенчмарка вне пилота, см. BENCHMARK_PRICE_ZONES)",
     )
     parser.add_argument("--period-id", type=int, default=CURRENT_PERIOD_ID)
     parser.add_argument(
@@ -187,7 +195,7 @@ def main() -> int:
     print(f"  Позиций в каталоге ГЭСН+ГЭСНр: {len(catalog)}, материалов ФСБЦ: {len(material_catalog)}")
 
     print(f"\n=== Шаг 3: региональные цены и индексы ГОСР — {args.region}, период {args.period_id} ===")
-    zone = PILOT_PRICE_ZONES[args.region]
+    zone = {**PILOT_PRICE_ZONES, **BENCHMARK_PRICE_ZONES}[args.region]
     price_zone_id = int(zone["price_zone_id"])
     current_prices = {
         **parse_current_prices_json(
@@ -211,6 +219,22 @@ def main() -> int:
     material_row_count = 0
 
     exact_code_row_count = 0
+
+    # Транспорт и погрузочно-разгрузочные работы — отдельный справочник
+    # ФГИС ЦС (не ГЭСН/ФСБЦ), сопоставление по описанию строки, см.
+    # transport_pricing.py. Данные подгружаются лениво, только если в смете
+    # встретилась такая строка.
+    transport_book = TransportPriceBook(
+        source=f"{TRANSPORT_SOURCE_LABEL}, {args.region}, {args.period_label}",
+        fetch_load_works=lambda: fetch_load_works_by_auto(price_zone_id, args.period_id),
+        fetch_filter_values=lambda level, **sel: fetch_transport_filter_values(
+            price_zone_id, args.period_id, level, **sel
+        ),
+        fetch_transportation=lambda road, vehicle, capacity: fetch_transportation_by_auto(
+            price_zone_id, args.period_id, road, vehicle, capacity
+        ),
+    )
+    transport_row_count = 0
 
     # Диагностика точности текстового поиска без точного кода — только под
     # --force-text-search, не влияет на прод-путь без флага (см. докстринг
@@ -265,6 +289,34 @@ def main() -> int:
             if source is not None:
                 exact_code_row_count += 1
                 print(f"  Код из «Обоснования» («{row.code}») найден точно в каталоге — текстовый поиск пропущен.")
+
+        if source is None:
+            transport = transport_book.match(row.name, row.code)
+            if transport is not None:
+                if transport.unit_price is None:
+                    alt = f" Варианты: {'; '.join(transport.alternatives)}." if transport.alternatives else ""
+                    print(f"  Транспорт/ПРР: не сопоставлено — {transport.failure_reason}.{alt}")
+                    unresolved_rows.append(f"{row.name} [транспорт/ПРР: {transport.failure_reason}]")
+                    continue
+                transport_row_count += 1
+                code_note = {
+                    True: f"совпадает с кодом документа «{normalize_gesn_code(row.code or '')}»",
+                    False: f"НЕ совпадает с кодом документа «{normalize_gesn_code(row.code or '')}» — сверьте вручную",
+                    None: "в документе кода нет",
+                }[transport.document_code_agrees]
+                print(
+                    f"  Транспорт/ПРР по описанию: {transport.official_code} «{transport.official_description}» — "
+                    f"{transport.unit_price:,.2f} руб./т, на объём {row.quantity} -> "
+                    f"{transport.unit_price * row.quantity:,.2f} руб."
+                )
+                print(f"    Источник: {transport.source}. Код {code_note}.")
+                if "т" not in row.unit.lower():
+                    print(
+                        f"  ⚠ Цена справочника — за 1 т груза, а единица строки «{row.unit}» — "
+                        "сумма может быть в другом масштабе, сверьте вручную."
+                    )
+                grand_total += transport.unit_price * row.quantity
+                continue
 
         if source is None:
             work_candidates = search_candidates(catalog, row.name, top_n=args.top_n)
@@ -455,6 +507,7 @@ def main() -> int:
     )
     print(f"Строк, для которых выбран каталог материалов (не работ): {material_row_count}")
     print(f"Строк, найденных точным кодом из «Обоснования» (без текстового поиска): {exact_code_row_count}")
+    print(f"Строк транспорта/ПРР, оценённых по справочнику ФГИС ЦС (по описанию): {transport_row_count}")
 
     if args.force_text_search:
         pct = (
