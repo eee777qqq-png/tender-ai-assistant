@@ -169,6 +169,18 @@ def _demo(profile, tender, extracted, classifier) -> None:
                 smeta_region_name="г. Москва",
                 smeta_period_label="3 квартал 2026 г.",
                 smeta_as_of_date=__import__("datetime").date.today(),
+                pricing_metadata=PricingMetadata(
+                    catalog_source="ДЕМО (тестовые фрагменты tests/fixtures)",
+                    catalog_files=[],
+                    catalog_version_date="демо",
+                    catalog_archive_url="демо",
+                    region="г. Москва",
+                    region_index_period="3 квартал 2026 г.",
+                    wage_act="демо",
+                    fgiscs_price_fetched_at="демо",
+                    price_zone_id=0,
+                    period_id=0,
+                ),
                 signoff_store=store,
             ),
             classifier,
@@ -177,6 +189,7 @@ def _demo(profile, tender, extracted, classifier) -> None:
         return r
 
     from quality_control import AuditReadinessTracker, CategorizedDiscrepancyLog
+    from smeta_estimator.pricing_metadata import PricingMetadata
     from smeta_estimator import review_match_result
 
     r = again("Старт: без единого решения эксперта")
@@ -189,6 +202,7 @@ def _demo(profile, tender, extracted, classifier) -> None:
             label = "ДЕМО — ручная проверка вердикта Агента 2 «разрешена»"
         elif rule == "R1_AGENT3_EXPERT_REVIEW":
             extracted.mark_expert_reviewed(reviewer="ДЕМО-эксперт")
+            record_expert_signoff(store, r.stop.signoff_key, reviewer="ДЕМО-эксперт", approved=True)
             label = "ДЕМО — требования Агента 3 «подтверждены»"
         elif rule == "R4_PROFILE_NOT_READY":
             print(f"(реальный профиль в статусе {profile.status.value} — блок перед Агентом 6 сработал на реальных данных)")

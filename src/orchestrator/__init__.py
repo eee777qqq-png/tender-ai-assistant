@@ -12,6 +12,7 @@ from .router import (
     StopDecision,
     package_content,
     record_expert_signoff,
+    requirements_content,
     route_regulatory_update,
     run_tender_pipeline,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "StopRule",
     "package_content",
     "record_expert_signoff",
+    "requirements_content",
     "route_regulatory_update",
     "run_tender_pipeline",
 ]

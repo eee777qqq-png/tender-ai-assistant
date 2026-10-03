@@ -13,19 +13,23 @@
 а не идеализированный 1→2→3→4→6→7→8 из формулировки задачи: Агент 2
 работает в два прохода (до и после Агента 3), Агент 4/5 — после 6/7.
 
-1. Агент 1 → 2: контракт `Tender`.
+1. Агент 1 → 2: контракт `Tender`; срок подачи уже прошёл → исход NOT_A_FIT
+   (закупка не доходит ни до одного гейта).
 2. Агент 2, проход 1 (`coarse_classify`): не подходит → исход NOT_A_FIT;
    только «требует ручной проверки» → R7.
 3. Агент 3: нет ни готовых требований, ни текста документации → R8;
    требования не подтверждены экспертом → R1 (дальше не идём — ими
-   пользуются Агенты 2/6/5/8).
+   пользуются Агенты 2/6/5/8). Подтверждение привязано к содержимому
+   требований (хэш в `ExpertReviewStore`, как у пакета Агента 6): правка
+   после подтверждения его сбрасывает.
 4. Агент 2, проход 2 (`final_classify`) — те же правила, что в п.2.
 5. Агент 11 → 6: профиль не READY → R4.
 6. Агент 6 (`assemble_document_package`) + контракт.
 7. Агент 7 (`check_completeness`) + контракт. FAIL комплектности — не
    остановка: это штатный исход, Агент 8 сообщает клиенту, чего не хватает.
 8. Агент 4 (если переданы позиции сметы): контракт; хоть одна позиция не
-   подтверждена экспертом → R2. Не переданы — шаги 4/5 пропускаются явно
+   подтверждена экспертом → R2; нет параметров расчёта или `pricing_metadata`
+   (версия базы/дата актуальности) → R8. Не переданы — шаги 4/5 пропускаются явно
    (сводка без раздела «Ожидаемая выгода»).
 9. Агент 5 (`estimate_profitability`).
 10. Выпуск к клиенту: пакет Агента 6 подтверждён экспертом для ЭТОГО
@@ -55,7 +59,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 from typing import Any
 
@@ -92,6 +96,7 @@ from .stop_rules import (
 )
 
 AGENT_2_NAME = "agent_2_classifier"
+AGENT_3_NAME = "agent_3_document_analyst"
 AGENT_6_NAME = "agent_6_document_assembler"
 
 
@@ -169,6 +174,8 @@ class PipelineInputs:
     # Хранилище подтверждений эксперта для пакета Агента 6 и ручной проверки
     # вердикта Агента 2. None — подтверждений нет (остановки R3/R7 сработают).
     signoff_store: ExpertReviewStore | None = None
+    # «Сегодня» для проверки срока подачи; None — реальная дата (нужен для тестов).
+    today: date | None = None
 
 
 @dataclass
@@ -251,6 +258,21 @@ def package_content(package: DocumentPackage) -> str:
     )
 
 
+def requirements_content(extracted: ExtractedRequirements) -> str:
+    """Каноническое содержимое требований Агента 3 для подтверждения экспертом.
+    Флаг `expert_reviewed`/имя проверяющего в хэш не входят — только то, что
+    эксперт реально проверял."""
+    return _canonical(
+        {
+            "tender": extracted.tender_purchase_number,
+            "timeline": asdict(extracted.timeline),
+            "security_requirements": [asdict(r) for r in extracted.security_requirements],
+            "participant_requirements": [asdict(r) for r in extracted.participant_requirements],
+            "hidden_risks": [asdict(r) for r in extracted.hidden_risks],
+        }
+    )
+
+
 def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
@@ -297,8 +319,11 @@ def _classify_step(
     step: str,
     match: ClassifierMatchResult,
     inputs: PipelineInputs,
+    document_type: str,
 ) -> None:
-    """Общий разбор вердикта Агента 2 для обоих проходов."""
+    """Общий разбор вердикта Агента 2 для обоих проходов. `document_type` разный
+    у coarse/final: подтверждения проходов не должны вытеснять друг друга в
+    `ExpertReviewStore` (иначе цепочка зацикливается между проходами)."""
     _require_contract(run, step, contracts.check_classifier_result(match, inputs.tender, inputs.profile))
     if match.is_match:
         _pass(run, step, f"ПОДХОДИТ (score={match.score:.2f})")
@@ -312,7 +337,7 @@ def _classify_step(
         run.outcome = RunOutcome.NOT_A_FIT
         raise _Halt
     content = _canonical([(c.name, c.message) for c in failed])
-    key = SignoffKey(AGENT_2_NAME, "manual_match_check", f"{inputs.profile.client_id}:{inputs.tender.purchase_number}", content)
+    key = SignoffKey(AGENT_2_NAME, document_type, f"{inputs.profile.client_id}:{inputs.tender.purchase_number}", content)
     ok, why = _find_signoff(inputs.signoff_store, key)
     if ok:
         _pass(run, step, f"«ТРЕБУЕТ РУЧНОЙ ПРОВЕРКИ» разрешено экспертом ({why})")
@@ -342,9 +367,24 @@ def run_tender_pipeline(inputs: PipelineInputs, classifier: ConstructionClassifi
         _pass(run, current_step, "Tender прошёл контракт")
         tender, profile = inputs.tender, inputs.profile
 
+        deadline = tender.submission_deadline
+        if deadline is not None:
+            deadline_day = deadline.date() if isinstance(deadline, datetime) else deadline
+            today = inputs.today or date.today()
+            if deadline_day < today:
+                run.steps.append(
+                    StepRecord(
+                        current_step,
+                        StepStatus.TERMINAL,
+                        f"срок подачи заявок истёк ({deadline_day.isoformat()} < {today.isoformat()})",
+                    )
+                )
+                run.outcome = RunOutcome.NOT_A_FIT
+                raise _Halt
+
         current_step = "agent_2_coarse"
         run.coarse_match = coarse_classify(profile, tender, classifier)
-        _classify_step(run, current_step, run.coarse_match, inputs)
+        _classify_step(run, current_step, run.coarse_match, inputs, "manual_match_check_coarse")
 
         current_step = "agent_3_documentation"
         extracted = inputs.extracted_requirements
@@ -354,24 +394,43 @@ def run_tender_pipeline(inputs: PipelineInputs, classifier: ConstructionClassifi
             extracted = extract_requirements(tender.purchase_number, inputs.documentation_text)
         _require_contract(run, current_step, contracts.check_extracted_requirements(extracted, tender))
         run.extracted_requirements = extracted
+        req_key = SignoffKey(
+            AGENT_3_NAME,
+            "extracted_requirements",
+            f"{profile.client_id}:{tender.purchase_number}",
+            requirements_content(extracted),
+        )
+        counts = (
+            f"требований к участнику: {len(extracted.participant_requirements)}, "
+            f"требований к обеспечению: {len(extracted.security_requirements)}, "
+            f"скрытых рисков: {len(extracted.hidden_risks)}"
+        )
         if not extracted.expert_reviewed:
             _stop(
                 run,
                 current_step,
                 R1_AGENT3_EXPERT_REVIEW,
                 "требования/риски из документации не подтверждены экспертом",
-                details=[
-                    f"требований к участнику: {len(extracted.participant_requirements)}, "
-                    f"требований к обеспечению: {len(extracted.security_requirements)}, "
-                    f"скрытых рисков: {len(extracted.hidden_risks)}"
-                ],
+                details=[counts],
+                signoff_key=req_key,
                 artifact=extracted,
             )
-        _pass(run, current_step, f"требования подтверждены экспертом {extracted.expert_reviewer}")
+        ok, why = _find_signoff(inputs.signoff_store, req_key)
+        if not ok:
+            _stop(
+                run,
+                current_step,
+                R1_AGENT3_EXPERT_REVIEW,
+                f"флаг expert_reviewed выставлен, но подтверждение не привязано к этому содержимому: {why}",
+                details=[counts],
+                signoff_key=req_key,
+                artifact=extracted,
+            )
+        _pass(run, current_step, f"требования подтверждены экспертом {extracted.expert_reviewer or '?'} ({why})")
 
         current_step = "agent_2_final"
         run.final_match = final_classify(profile, tender, classifier, extracted)
-        _classify_step(run, current_step, run.final_match, inputs)
+        _classify_step(run, current_step, run.final_match, inputs, "manual_match_check_final")
 
         current_step = "agent_11_profile_gate"
         if not profile.is_ready_for_agent_6():
@@ -424,6 +483,7 @@ def run_tender_pipeline(inputs: PipelineInputs, classifier: ConstructionClassifi
                     ("smeta_region_name", inputs.smeta_region_name),
                     ("smeta_period_label", inputs.smeta_period_label),
                     ("smeta_as_of_date", inputs.smeta_as_of_date),
+                    ("pricing_metadata", inputs.pricing_metadata),
                 )
                 if not v
             ]

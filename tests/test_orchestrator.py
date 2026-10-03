@@ -7,7 +7,7 @@ XML в реальной структуре извещения ЕИС, текст
 
 import copy
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -50,6 +50,7 @@ from smeta_estimator import (
 from test_end_to_end_pipeline_from_notice import NOTICE_XML, _build_ready_profile
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+TODAY = date(2026, 8, 10)  # до срока подачи тестовой закупки (2026-08-20)
 REGION, PERIOD = "г. Москва", "3 квартал 2026 г."
 
 
@@ -99,6 +100,31 @@ def store(tmp_path):
     return ExpertReviewStore(tmp_path / "reviews.sqlite3")
 
 
+def _pricing_metadata():
+    from smeta_estimator.pricing_metadata import PricingMetadata
+
+    return PricingMetadata(
+        catalog_source="тест",
+        catalog_files=[],
+        catalog_version_date="2026-01-01",
+        catalog_archive_url="url",
+        region=REGION,
+        region_index_period=PERIOD,
+        wage_act="тест",
+        fgiscs_price_fetched_at="2026-08-10",
+        price_zone_id=1,
+        period_id=1,
+    )
+
+
+def _sign_requirements(store, extracted):
+    """Подтверждение Агента 3, привязанное к содержимому (как делает эксперт)."""
+    from orchestrator.router import AGENT_3_NAME, SignoffKey, requirements_content
+
+    key = SignoffKey(AGENT_3_NAME, "extracted_requirements", f"{_build_ready_profile().client_id}:{extracted.tender_purchase_number}", requirements_content(extracted))
+    record_expert_signoff(store, key, reviewer="Edwin", approved=True)
+
+
 def _inputs(store, **overrides):
     tender = _tender()
     base = dict(
@@ -109,9 +135,15 @@ def _inputs(store, **overrides):
         smeta_region_name=REGION,
         smeta_period_label=PERIOD,
         smeta_as_of_date=date(2026, 10, 3),
+        pricing_metadata=_pricing_metadata(),
         signoff_store=store,
+        today=TODAY,
     )
     base.update(overrides)
+    ext = base["extracted_requirements"]
+    if ext is not None and ext.expert_reviewed and base["signoff_store"] is not None and not overrides.get("_no_req_signoff"):
+        _sign_requirements(base["signoff_store"], ext)
+    base.pop("_no_req_signoff", None)
     return PipelineInputs(**base)
 
 
@@ -211,7 +243,10 @@ def test_r3_rejected_package_stays_blocked(store):
 def test_r3_without_signoff_store_never_releases():
     run = run_tender_pipeline(_inputs(None))
 
-    assert run.stop.rule.rule_id == "R3_AGENT6_EXPERT_SIGNOFF"
+    # Без хранилища нет ни одного подтверждения: раньше всех сработает R1
+    # (подтверждение Агента 3 теперь тоже привязано к хранилищу), до клиента — никогда.
+    assert run.stop.rule.rule_id == "R1_AGENT3_EXPERT_REVIEW"
+    assert run.client_summary is None and run.outcome == RunOutcome.AWAITING_EXPERT
 
 
 # --- R4: профиль не READY — блок перед Агентом 6 ---
@@ -398,3 +433,111 @@ def test_stop_decision_is_serializable_for_ui(store):
     assert d["stop"]["rule_id"] == "R3_AGENT6_EXPERT_SIGNOFF"
     assert d["stop"]["expert_action"]
     assert "R3_AGENT6_EXPERT_SIGNOFF" in run.render_log()
+
+
+# --- Правки по итогам построчной проверки роутера (2026-10-03) ---
+
+
+def _manual_review_profile():
+    """Узкая специализация клиента не совпала с ОКПД2 закупки (R7 на грубом
+    проходе) + нераспознанное требование к опыту (R7 на финальном проходе)."""
+    profile = _build_ready_profile()
+    profile.permits_experience.completed_contracts = []
+    profile.capacity.equipment = ["самосвал", "экскаватор"]
+    profile.capacity.own_workforce_description = "грузоперевозки"
+    return profile
+
+
+def test_r7_both_passes_need_manual_review_signoffs_do_not_overwrite_each_other(store):
+    profile = _manual_review_profile()
+    tender = _tender()
+    make = lambda: _inputs(store, profile=profile, tender=tender, extracted_requirements=_unclear_requirements(tender))
+
+    steps = []
+    run = run_tender_pipeline(make())
+    for _ in range(6):
+        if run.stop is None or run.stop.rule.rule_id != "R7_CLASSIFIER_MANUAL_CHECK":
+            break
+        steps.append(run.stop.step)
+        record_expert_signoff(store, run.stop.signoff_key, reviewer="Edwin", approved=True)
+        run = run_tender_pipeline(make())
+
+    assert steps == ["agent_2_coarse", "agent_2_final"]  # по одному разу, без возврата
+    assert run.stop.rule.rule_id == "R3_AGENT6_EXPERT_SIGNOFF"
+
+
+def test_expired_submission_deadline_is_not_a_fit_and_never_reaches_gates(store):
+    run = run_tender_pipeline(_inputs(store, today=date(2026, 9, 1)))  # срок тестовой закупки — 2026-08-20
+
+    assert run.outcome == RunOutcome.NOT_A_FIT
+    assert run.stop is None
+    assert [s.step for s in run.steps][-1] == "agent_1_tender"
+    assert run.steps[-1].status.value == "terminal" and "срок подачи" in run.steps[-1].message
+    assert run.package is None and run.extracted_requirements is None
+
+
+def test_deadline_today_is_still_allowed(store):
+    run = run_tender_pipeline(_inputs(store, today=date(2026, 8, 20)))
+
+    assert run.outcome != RunOutcome.NOT_A_FIT
+    assert run.stop.rule.rule_id == "R3_AGENT6_EXPERT_SIGNOFF"
+
+
+def test_deadline_as_datetime_is_compared_by_date(store):
+    import dataclasses
+
+    tender = _tender()
+    tender = dataclasses.replace(tender, submission_deadline=datetime(2026, 8, 20, 9, 0))
+    extracted = _reviewed_requirements(tender)
+    run = run_tender_pipeline(_inputs(store, tender=tender, extracted_requirements=extracted, today=date(2026, 8, 20)))
+
+    assert run.outcome != RunOutcome.NOT_A_FIT
+
+
+def test_smeta_without_pricing_metadata_blocks_with_r8_before_release(store):
+    run = run_tender_pipeline(_inputs(store, pricing_metadata=None))
+
+    assert run.stop.rule.rule_id == "R8_MISSING_INPUT"
+    assert run.stop.step == "agent_4_smeta"
+    assert run.stop.details == ["pricing_metadata"]
+    assert run.smeta_result is None and run.client_summary is None
+
+
+def test_pricing_metadata_not_required_when_smeta_not_provided(store):
+    run = run_tender_pipeline(_inputs(store, smeta_line_items=None, pricing_metadata=None))
+
+    assert run.stop.rule.rule_id == "R3_AGENT6_EXPERT_SIGNOFF"  # шаги 4/5 пропущены явно, не R8
+
+
+def test_r1_flag_without_content_bound_signoff_does_not_pass(store):
+    tender = _tender()
+    extracted = _reviewed_requirements(tender)  # флаг стоит, подтверждения в хранилище нет
+    run = run_tender_pipeline(_inputs(store, tender=tender, extracted_requirements=extracted, _no_req_signoff=True))
+
+    assert run.stop.rule.rule_id == "R1_AGENT3_EXPERT_REVIEW"
+    assert run.stop.signoff_key is not None
+
+
+def test_r1_edit_after_signoff_resets_confirmation(store):
+    tender = _tender()
+    extracted = _reviewed_requirements(tender)
+    first = run_tender_pipeline(_inputs(store, tender=tender, extracted_requirements=extracted))
+    assert first.stop.rule.rule_id == "R3_AGENT6_EXPERT_SIGNOFF"  # подтверждение Агента 3 принято
+
+    extracted.participant_requirements.append(
+        ParticipantRequirement(kind="sro", description="добавлено после подтверждения", raw_text="СРО")
+    )
+    second = run_tender_pipeline(_inputs(store, tender=tender, extracted_requirements=extracted, _no_req_signoff=True))
+
+    assert second.stop.rule.rule_id == "R1_AGENT3_EXPERT_REVIEW"
+    assert "изменилось после подтверждения" in second.stop.reason
+
+
+def test_r1_expert_resolution_via_signoff_key_lets_chain_continue(store):
+    tender = _tender()
+    extracted = _reviewed_requirements(tender)
+    first = run_tender_pipeline(_inputs(store, tender=tender, extracted_requirements=extracted, _no_req_signoff=True))
+    record_expert_signoff(store, first.stop.signoff_key, reviewer="Edwin", approved=True)
+    second = run_tender_pipeline(_inputs(store, tender=tender, extracted_requirements=extracted, _no_req_signoff=True))
+
+    assert second.stop.rule.rule_id == "R3_AGENT6_EXPERT_SIGNOFF"
